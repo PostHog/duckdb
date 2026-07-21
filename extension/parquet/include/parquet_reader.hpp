@@ -15,6 +15,7 @@
 #include "duckdb/common/encryption_functions.hpp"
 #include "duckdb/common/encryption_state.hpp"
 #include "duckdb/common/exception.hpp"
+#include "duckdb/common/mutex.hpp"
 #include "duckdb/common/multi_file/base_file_reader.hpp"
 #include "duckdb/common/multi_file/multi_file_options.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -25,6 +26,23 @@
 #include "parquet_types.h"
 #include "resizable_buffer.hpp"
 #include "duckdb/execution/adaptive_filter.hpp"
+#include "duckdb/common/column_index.hpp"
+#include "duckdb/common/multi_file/multi_file_data.hpp"
+#include "duckdb/common/open_file_info.hpp"
+#include "duckdb/common/optional_idx.hpp"
+#include "duckdb/common/optional_ptr.hpp"
+#include "duckdb/common/projection_index.hpp"
+#include "duckdb/common/shared_ptr_ipp.hpp"
+#include "duckdb/common/string.hpp"
+#include "duckdb/common/typedefs.hpp"
+#include "duckdb/common/types.hpp"
+#include "duckdb/common/types/selection_vector.hpp"
+#include "duckdb/common/types/value.hpp"
+#include "duckdb/common/unique_ptr.hpp"
+#include "duckdb/common/vector.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "parquet_column_schema.hpp"
+#include "thrift/protocol/TProtocol.h"
 
 #include <exception>
 
@@ -251,8 +269,12 @@ private:
 	unique_ptr<AdditionalAuthenticatedData> GenerateAAD(uint8_t module_type, uint16_t row_group_ordinal,
 	                                                    uint16_t column_ordinal, uint16_t page_ordinal) const;
 
+	optional_ptr<const BaseStatistics> GetVariantStats(const ParquetColumnSchema &schema) const;
+
 private:
 	unique_ptr<CachingFileHandle> file_handle;
+	mutable mutex variant_stats_lock;
+	mutable unordered_map<idx_t, unique_ptr<BaseStatistics>> variant_stats_cache;
 };
 
 } // namespace duckdb

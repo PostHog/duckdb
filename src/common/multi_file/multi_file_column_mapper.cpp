@@ -1065,6 +1065,25 @@ static unique_ptr<TableFilter> TryCastTableFilter(const TableFilter &global_filt
 	}
 }
 
+static idx_t StartIndexAtZero(unique_ptr<Expression> &root_expr) {
+	map<idx_t, vector<reference<BoundReferenceExpression>>> reference_map;
+
+	//! First gather all references, sorted by their index
+	ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
+	    root_expr, [&reference_map](BoundReferenceExpression &ref, unique_ptr<Expression> &expr) {
+		    reference_map[ref.Index()].push_back(ref);
+	    });
+	idx_t new_index = 0;
+	//! Then assign all the references a new index, starting at 0
+	for (auto &[_, references] : reference_map) {
+		auto index = new_index++;
+		for (auto &ref : references) {
+			ref.get().IndexMutable() = index;
+		}
+	}
+	return new_index;
+}
+
 void SetIndexToZero(unique_ptr<Expression> &root_expr) {
 #ifdef DEBUG
 	optional_idx index;
@@ -1111,9 +1130,7 @@ unique_ptr<TableFilterSet> MultiFileColumnMapper::CreateFilters(map<idx_t, refer
 		}
 		auto &map_entry = local_it->second;
 		auto local_id = map_entry.mapping.index;
-		auto filter_idx = reader.column_indexes[local_id].GetPrimaryIndex();
 		auto &local_type = map_entry.local_type;
-		auto &global_type = map_entry.global_type;
 
 		unique_ptr<TableFilter> local_filter;
 		switch (map_entry.filter_conversion) {
@@ -1139,11 +1156,18 @@ unique_ptr<TableFilterSet> MultiFileColumnMapper::CreateFilters(map<idx_t, refer
 			// add the expression to the expression map - we are now evaluating this inside the reader directly
 			// we need to set the index of the references inside the expression to 0
 			auto &expr = reader_data.expressions[global_index];
-			SetIndexToZero(expr);
-			reader.expression_map[filter_idx] = std::move(expr);
+			auto unique_ref_count = StartIndexAtZero(expr);
+			auto expression_type = expr->GetReturnType();
+
+			vector<ColumnIndex> expression_column_indexes;
+			for (idx_t i = 0; i < unique_ref_count; i++) {
+				expression_column_indexes.push_back(reader.column_indexes[local_id + i]);
+			}
+			reader.expression_map.emplace(ProjectionIndex(local_id),
+			                              BaseFileReaderExpression(std::move(expr), expression_column_indexes));
 
 			// reset the expression - since we are evaluating it in the reader we can just reference it
-			expr = make_uniq<BoundReferenceExpression>(global_type, local_id);
+			expr = make_uniq<BoundReferenceExpression>(std::move(expression_type), local_id);
 		}
 	}
 	return result;

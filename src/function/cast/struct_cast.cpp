@@ -59,7 +59,8 @@ unique_ptr<BoundCastData> StructBoundCastData::BindStructToStructCast(BindCastIn
 	}
 
 	if (!has_any_match) {
-		throw BinderException("STRUCT to STRUCT cast must have at least one matching member");
+		throw BinderException("STRUCT to STRUCT cast must have at least one matching member, inputs are (%s) and (%s)",
+		                      source.ToString(), target.ToString());
 	}
 
 	// The remaining target children have no match in the source struct.

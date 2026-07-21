@@ -188,6 +188,14 @@ static bool ParquetScanPushdownExpression(ClientContext &context, const LogicalG
 	return true;
 }
 
+static bool ParquetScanSupportPushdownExtract(const FunctionData &bind_data_p, const LogicalIndex &col_idx) {
+	auto &bind_data = bind_data_p.Cast<MultiFileBindData>();
+
+	auto &column = bind_data.columns[col_idx.index];
+	auto &column_type = column.type;
+	return column_type.id() == LogicalTypeId::STRUCT || column_type.id() == LogicalTypeId::VARIANT;
+}
+
 static void VerifyParquetSchemaParameter(const Value &schema) {
 	LogicalType::MAP(LogicalType::BLOB, LogicalType::STRUCT({{{"name", LogicalType::VARCHAR},
 	                                                          {"type", LogicalType::VARCHAR},

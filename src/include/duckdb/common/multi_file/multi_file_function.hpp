@@ -374,11 +374,11 @@ public:
 			auto local_idx = MultiFileLocalIndex(i);
 			auto local_id = local_column_ids[local_idx];
 			auto cast_entry = reader.cast_map.find(local_id);
-			auto expr_entry = reader.expression_map.find(local_id);
+			auto expr_entry = reader.expression_map.find(ProjectionIndex(i));
 			if (cast_entry != reader.cast_map.end()) {
 				intermediate_chunk_types.push_back(cast_entry->second);
 			} else if (expr_entry != reader.expression_map.end()) {
-				intermediate_chunk_types.push_back(expr_entry->second->return_type);
+				intermediate_chunk_types.push_back(expr_entry->second.expression->return_type);
 			} else {
 				auto &col = local_columns[local_id];
 				intermediate_chunk_types.push_back(col.type);
