@@ -300,7 +300,9 @@ unique_ptr<ColumnWriter> ColumnWriter::CreateWriterRecursive(ClientContext &cont
 	}
 
 	if (type.id() == LogicalTypeId::VARIANT) {
-		const bool is_shredded = shredding_type != nullptr;
+		//! An explicit 'VARIANT' shredding type requests the unshredded layout (everything lands in 'value')
+		const bool explicit_unshredded = shredding_type && shredding_type->type.id() == LogicalTypeId::ANY;
+		const bool is_shredded = shredding_type != nullptr && !explicit_unshredded;
 
 		//! Build the child types for the Parquet VARIANT
 		child_list_t<LogicalType> child_types;
@@ -346,12 +348,17 @@ unique_ptr<ColumnWriter> ColumnWriter::CreateWriterRecursive(ClientContext &cont
 				is_optional = true;
 			}
 
-			child_writers.push_back(CreateWriterRecursive(context, writer, path_in_schema, child_type, child_name,
-			                                              allow_geometry, child_field_ids, child_shredding, max_repeat,
-			                                              max_define + 1, is_optional));
+		child_writers.push_back(CreateWriterRecursive(context, writer, path_in_schema, child_type, child_name,
+		                                              allow_geometry, child_field_ids, child_shredding, max_repeat,
+		                                              max_define + 1, is_optional));
 		}
-		return make_uniq<VariantColumnWriter>(writer, std::move(variant_column), path_in_schema,
-		                                      std::move(child_writers));
+		auto result = make_uniq<VariantColumnWriter>(writer, std::move(variant_column), path_in_schema,
+		                                             std::move(child_writers));
+		if (explicit_unshredded) {
+			//! Explicitly requested unshredded layout, don't let the analyzer add a 'typed_value'
+			result->SetExplicitShredding();
+		}
+		return result;
 	}
 
 	if (StructType::IsStruct(type.id()) || type.id() == LogicalTypeId::UNION) {

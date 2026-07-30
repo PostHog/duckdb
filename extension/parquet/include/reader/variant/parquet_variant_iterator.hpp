@@ -110,6 +110,26 @@ public:
 	bool IsMissing() const {
 		return kind == Kind::MISSING;
 	}
+	bool IsBinary() const {
+		return kind == Kind::BINARY;
+	}
+	bool IsShredded() const {
+		return kind == Kind::SHREDDED;
+	}
+	//! BINARY: the value's start (header byte) + one past the end of its blob
+	const_data_ptr_t BinaryData() const {
+		return binary;
+	}
+	const_data_ptr_t BinaryEnd() const {
+		return binary_end;
+	}
+	//! SHREDDED: the shredded position
+	const ShreddedGroupView &View() const {
+		return *view;
+	}
+	idx_t GroupIndex() const {
+		return index;
+	}
 
 	VariantLogicalType GetTypeId() const;
 	//! Returns the fixed-width primitive payload (loaded / re-encoded as T)
@@ -224,6 +244,10 @@ public:
 
 	//! The (lazily-decoded) Variant metadata of the current row
 	const VariantMetadata &GetMetadata() const;
+	//! The metadata blob the current decoded metadata was built from
+	const string_t &GetMetadataBlob() const {
+		return current_metadata_blob;
+	}
 
 	//! The recursive view of the Parquet group tree (used by the shredded-conversion path)
 	const ShreddedGroupView &GetRootView() const {
@@ -239,6 +263,9 @@ private:
 
 	idx_t current_row = 0;
 	mutable unique_ptr<VariantMetadata> current_metadata;
+	//! The metadata blob 'current_metadata' was decoded from - rows sharing identical metadata bytes reuse
+	//! the decoded dictionary instead of re-decoding (and re-allocating) per row
+	mutable string_t current_metadata_blob;
 };
 
 //! Convert a Parquet VARIANT (metadata + group) into DuckDB's SHREDDED VARIANT format: the Parquet
@@ -253,5 +280,10 @@ public:
 	//! The inverse of 'variant_to_parquet_variant'.
 	static ScalarFunction GetBytesToVariantFunction();
 };
+
+//! Targeted VARIANT extract: navigate only the requested path in each row's value and emit just the
+//! addressed value into the canonical VARIANT 'result' - no whole-value conversion, no double pass.
+void VariantExtractTargeted(ParquetVariantIterator &iterator, const vector<VariantPathComponent> &path,
+                            Vector &result, idx_t count);
 
 } // namespace duckdb
