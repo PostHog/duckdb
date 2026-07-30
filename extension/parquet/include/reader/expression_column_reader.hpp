@@ -75,6 +75,12 @@ public:
 		return total_compressed_size;
 	}
 
+	void GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) override {
+		for (auto &child_reader : child_readers) {
+			child_reader->GetScannedColumnSizes(result);
+		}
+	}
+
 	idx_t FileOffset() const override {
 		return child_readers[0]->FileOffset();
 	}

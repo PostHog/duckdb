@@ -143,6 +143,15 @@ uint64_t StructColumnReader::TotalCompressedSize() {
 	return size;
 }
 
+void StructColumnReader::GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) {
+	for (auto &child : child_readers) {
+		if (!child) {
+			continue;
+		}
+		child->GetScannedColumnSizes(result);
+	}
+}
+
 static bool TypeHasExactRowCount(const LogicalType &type) {
 	switch (type.id()) {
 	case LogicalTypeId::LIST:

@@ -1878,11 +1878,18 @@ ParquetPrefetchStrategy ParquetReader::RegisterRowGroupReads(ClientContext &cont
 	// TODO: only need this if we have a deletion vector?
 	state.group_offset = GetRowGroupOffset(*this, state.group_index);
 
-	uint64_t to_scan_compressed_bytes = 0;
+	// Collect the distinct leaf chunks across all projections. Summing TotalCompressedSize() per projection would
+	// count a chunk once per reader that touches it, and pushed-down field extracts give several readers over the
+	// same physical column - inflating the total past the row group span.
+	unordered_map<idx_t, uint64_t> scanned_column_sizes;
 	for (idx_t i = 0; i < column_ids.size(); i++) {
 		auto col_idx = MultiFileLocalIndex(i);
 		PrepareRowGroupBuffer(context, state, col_idx);
-		to_scan_compressed_bytes += state.GetColumnReader(i).TotalCompressedSize();
+		state.GetColumnReader(i).GetScannedColumnSizes(scanned_column_sizes);
+	}
+	uint64_t to_scan_compressed_bytes = 0;
+	for (auto &entry : scanned_column_sizes) {
+		to_scan_compressed_bytes += entry.second;
 	}
 
 	auto &group = GetGroup(state);

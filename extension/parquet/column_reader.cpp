@@ -169,6 +169,13 @@ uint64_t ColumnReader::TotalCompressedSize() {
 	return chunk->meta_data.total_compressed_size;
 }
 
+void ColumnReader::GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) {
+	if (IsSkipped()) {
+		return;
+	}
+	result[ColumnIndex()] = chunk->meta_data.total_compressed_size;
+}
+
 // Note: It's not trivial to determine where all Column data is stored. Chunk->file_offset
 // apparently is not the first page of the data. Therefore we determine the address of the first page by taking the
 // minimum of all page offsets.

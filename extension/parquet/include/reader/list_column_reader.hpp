@@ -33,6 +33,10 @@ public:
 		return child_column_reader->GroupRowsAvailable() + overflow_child_count;
 	}
 
+	void GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) override {
+		child_column_reader->GetScannedColumnSizes(result);
+	}
+
 	uint64_t TotalCompressedSize() override {
 		return child_column_reader->TotalCompressedSize();
 	}

@@ -225,6 +225,15 @@ uint64_t VariantColumnReader::TotalCompressedSize() {
 	return size;
 }
 
+void VariantColumnReader::GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) {
+	for (auto &child : child_readers) {
+		if (!child) {
+			continue;
+		}
+		child->GetScannedColumnSizes(result);
+	}
+}
+
 idx_t VariantColumnReader::GroupRowsAvailable() {
 	for (auto &child : child_readers) {
 		if (!child) {
