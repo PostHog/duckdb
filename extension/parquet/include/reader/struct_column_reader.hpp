@@ -33,6 +33,7 @@ public:
 	void Skip(idx_t num_values) override;
 	idx_t GroupRowsAvailable() override;
 	uint64_t TotalCompressedSize() override;
+	void GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) override;
 	void RegisterPrefetch(ThriftFileTransport &transport, bool allow_merge) override;
 };
 

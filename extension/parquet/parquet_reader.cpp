@@ -1415,7 +1415,12 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 		// TODO: only need this if we have a deletion vector?
 		state.group_offset = GetRowGroupOffset(state.root_reader->Reader(), state.group_idx_list[state.current_group]);
 
-		uint64_t to_scan_compressed_bytes = 0;
+		// Collect the distinct leaf chunks across all projections. Summing
+		// TotalCompressedSize() per projection counts a chunk once per reader
+		// that touches it, and pushed-down field extracts give several readers
+		// over the same physical column - inflating the total past the row
+		// group span and tripping the broken-page-offsets error on remote files.
+		unordered_map<idx_t, uint64_t> scanned_column_sizes;
 		for (idx_t i = 0; i < column_ids.size(); i++) {
 			auto col_idx = MultiFileLocalIndex(i);
 			PrepareRowGroupBuffer(state, col_idx);
@@ -1423,7 +1428,11 @@ AsyncResult ParquetReader::Scan(ClientContext &context, ParquetReaderScanState &
 			auto file_col_idx = column_ids[col_idx];
 
 			auto &root_reader = state.root_reader->Cast<StructColumnReader>();
-			to_scan_compressed_bytes += root_reader.GetChildReader(file_col_idx).TotalCompressedSize();
+			root_reader.GetChildReader(file_col_idx).GetScannedColumnSizes(scanned_column_sizes);
+		}
+		uint64_t to_scan_compressed_bytes = 0;
+		for (auto &entry : scanned_column_sizes) {
+			to_scan_compressed_bytes += entry.second;
 		}
 
 		auto &group = GetGroup(state);

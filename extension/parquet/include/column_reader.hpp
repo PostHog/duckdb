@@ -95,6 +95,9 @@ public:
 	idx_t MaxRepeat() const {
 		return column_schema.max_repeat;
 	}
+	inline bool IsSkipped() const {
+		return !chunk;
+	}
 
 	void InitializeCryptoMetadata(const duckdb_parquet::EncryptionAlgorithm &encryption_algorithm,
 	                              idx_t row_group_ordinal_p) {
@@ -112,6 +115,11 @@ public:
 
 	virtual idx_t FileOffset() const;
 	virtual uint64_t TotalCompressedSize();
+	//! Records the compressed size of every leaf column chunk this reader scans, keyed by column index. Several
+	//! readers can target the same physical column - e.g. multiple pushed-down field extracts of one VARIANT or
+	//! STRUCT - so callers that reason about bytes on disk must count each chunk once rather than summing
+	//! TotalCompressedSize() per projection.
+	virtual void GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result);
 	virtual idx_t GroupRowsAvailable();
 
 	// register the range this reader will touch for prefetching

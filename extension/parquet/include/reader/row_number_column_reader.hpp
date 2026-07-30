@@ -39,6 +39,8 @@ public:
 	uint64_t TotalCompressedSize() override {
 		return 0;
 	}
+	void GetScannedColumnSizes(unordered_map<idx_t, uint64_t> &result) override {
+	}
 	idx_t FileOffset() const override {
 		return 0;
 	}
