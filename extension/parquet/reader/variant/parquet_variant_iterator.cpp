@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <set>
 #include <type_traits>
 
@@ -377,13 +378,23 @@ ParquetVariantIterator::ParquetVariantIterator(Vector &metadata_vec) : metadata(
 
 void ParquetVariantIterator::BeginRow(idx_t row) {
 	current_row = row;
-	current_metadata.reset();
 }
 
 const VariantMetadata &ParquetVariantIterator::GetMetadata() const {
-	if (!current_metadata) {
-		current_metadata = make_uniq<VariantMetadata>(metadata[current_row].GetValueUnsafe());
+	auto blob = metadata[current_row].GetValueUnsafe();
+	if (current_metadata) {
+		if (current_metadata_blob.GetData() == blob.GetData() && current_metadata_blob.GetSize() == blob.GetSize()) {
+			return *current_metadata;
+		}
+		if (current_metadata_blob.GetSize() == blob.GetSize() &&
+		    memcmp(current_metadata_blob.GetData(), blob.GetData(), blob.GetSize()) == 0) {
+			//! Identical metadata content in a different heap copy - keep the decoded dictionary
+			current_metadata_blob = blob;
+			return *current_metadata;
+		}
 	}
+	current_metadata = make_uniq<VariantMetadata>(blob);
+	current_metadata_blob = blob;
 	return *current_metadata;
 }
 
@@ -449,10 +460,12 @@ ParquetVariantNode ParquetVariantIterator::Root(idx_t row) const {
 }
 
 ParquetVariantNode ParquetVariantIterator::BinaryRoot() const {
-	//! The metadata and the value share the same blob: the value bytes start right after the metadata
+	//! The metadata and the value share the same blob: the value bytes start right after the metadata.
+	//! Use the current row's own blob for the extents (the cached decoded dictionary provides 'total_size')
 	auto &variant_metadata = GetMetadata();
-	auto blob_start = const_data_ptr_cast(variant_metadata.metadata.GetData());
-	auto blob_end = blob_start + variant_metadata.metadata.GetSize();
+	auto &blob = metadata[current_row].GetValueUnsafe();
+	auto blob_start = const_data_ptr_cast(blob.GetData());
+	auto blob_end = blob_start + blob.GetSize();
 	auto value_start = blob_start + variant_metadata.total_size;
 	//! The value's header byte must be readable
 	CheckBinaryRead(value_start, 1, blob_end);
@@ -591,8 +604,12 @@ ParquetArrayIterator ParquetVariantNode::GetArrayChildren() const {
 // ParquetObjectIterator
 //===--------------------------------------------------------------------===//
 void ParquetObjectIterator::Finalize() {
-	std::sort(ordered_entries.begin(), ordered_entries.end(),
-	          [](const ParquetObjectEntry &a, const ParquetObjectEntry &b) { return a.key < b.key; });
+	//! Writers emit fields in lexicographic key order (per the VARIANT spec) - only sort when needed
+	if (!std::is_sorted(ordered_entries.begin(), ordered_entries.end(),
+	                    [](const ParquetObjectEntry &a, const ParquetObjectEntry &b) { return a.key < b.key; })) {
+		std::sort(ordered_entries.begin(), ordered_entries.end(),
+		          [](const ParquetObjectEntry &a, const ParquetObjectEntry &b) { return a.key < b.key; });
+	}
 }
 
 ParquetObjectIterator::ParquetObjectIterator(const ParquetVariantIterator &state, const ShreddedGroupView &view,
@@ -670,6 +687,160 @@ ParquetVariantNode ParquetArrayIterator::operator[](idx_t i) const {
 
 void ParquetVariantIterator::EmitBinary(const_data_ptr_t data, const_data_ptr_t end, VariantBuilder &builder) const {
 	EmitIterator(ParquetVariantNode::MakeBinary(*this, data, end), builder);
+}
+
+//===--------------------------------------------------------------------===//
+// Targeted VARIANT extract (pushdown)
+//===--------------------------------------------------------------------===//
+namespace {
+
+//! Per-chunk state for targeted extraction: BY_KEY path components are resolved to metadata dictionary
+//! field ids once per distinct metadata dictionary, so per-row lookups are plain integer comparisons
+struct VariantExtractPathState {
+	explicit VariantExtractPathState(const vector<VariantPathComponent> &path) : path(path) {
+		field_ids.resize(path.size());
+		resolved.resize(path.size(), false);
+	}
+
+	const vector<VariantPathComponent> &path;
+	vector<uint32_t> field_ids;
+	vector<bool> resolved;
+	//! The metadata blob the resolution is valid for (keyed by content - the decoded metadata object can be
+	//! freed and its address reused when the dictionary changes)
+	string_t resolved_blob;
+
+	void Resolve(const VariantMetadata &metadata, const string_t &blob) {
+		if (resolved_blob.GetData() == blob.GetData() && resolved_blob.GetSize() == blob.GetSize()) {
+			return;
+		}
+		if (resolved_blob.GetData() && resolved_blob.GetSize() == blob.GetSize() &&
+		    memcmp(resolved_blob.GetData(), blob.GetData(), blob.GetSize()) == 0) {
+			resolved_blob = blob;
+			return;
+		}
+		resolved_blob = blob;
+		//! The 'sorted_strings' flag is not reliable across writers (DuckDB itself used to set it without
+		//! always sorting) - verify instead of trusting it
+		bool is_sorted = std::is_sorted(metadata.strings.begin(), metadata.strings.end());
+		for (idx_t i = 0; i < path.size(); i++) {
+			resolved[i] = false;
+			if (path[i].lookup_mode != VariantChildLookupMode::BY_KEY) {
+				continue;
+			}
+			auto &key = path[i].key;
+			if (is_sorted) {
+				auto it = std::lower_bound(metadata.strings.begin(), metadata.strings.end(), key);
+				if (it != metadata.strings.end() && *it == key) {
+					field_ids[i] = NumericCast<uint32_t>(it - metadata.strings.begin());
+					resolved[i] = true;
+				}
+			} else {
+				for (idx_t k = 0; k < metadata.strings.size(); k++) {
+					if (metadata.strings[k] == key) {
+						field_ids[i] = NumericCast<uint32_t>(k);
+						resolved[i] = true;
+						break;
+					}
+				}
+			}
+		}
+	}
+};
+
+ParquetVariantNode ExtractObjectChildBinary(const ParquetVariantIterator &state, const VariantMetadata &metadata,
+                                            const_data_ptr_t data, const_data_ptr_t end, uint32_t field_id) {
+	BinaryObjectReader reader(metadata, data, end);
+	for (idx_t i = 0; i < reader.count; i++) {
+		auto id = ReadVarLE(reader.field_id_size, reader.field_ids + (i * reader.field_id_size), end);
+		if (id == field_id) {
+			return ParquetVariantNode::MakeBinary(state, reader.Child(i), end);
+		}
+	}
+	return ParquetVariantNode::MakeMissing();
+}
+
+//! Resolve the child of 'node' addressed by path[path_index] (MISSING when absent / not applicable)
+ParquetVariantNode ExtractChild(const ParquetVariantIterator &state, VariantExtractPathState &st,
+                                const ParquetVariantNode &node, idx_t path_index) {
+	auto &component = st.path[path_index];
+	if (component.lookup_mode == VariantChildLookupMode::BY_INDEX) {
+		if (node.GetTypeId() != VariantLogicalType::ARRAY) {
+			return ParquetVariantNode::MakeMissing();
+		}
+		auto array = node.GetArrayChildren();
+		if (component.index >= array.size()) {
+			return ParquetVariantNode::MakeMissing();
+		}
+		return array[component.index];
+	}
+	D_ASSERT(component.lookup_mode == VariantChildLookupMode::BY_KEY);
+	if (node.GetTypeId() != VariantLogicalType::OBJECT) {
+		return ParquetVariantNode::MakeMissing();
+	}
+	if (node.IsBinary()) {
+		auto &metadata = state.GetMetadata();
+		st.Resolve(metadata, state.GetMetadataBlob());
+		if (!st.resolved[path_index]) {
+			return ParquetVariantNode::MakeMissing();
+		}
+		return ExtractObjectChildBinary(state, metadata, node.BinaryData(), node.BinaryEnd(),
+		                                st.field_ids[path_index]);
+	}
+	D_ASSERT(node.IsShredded());
+	auto &view = node.View();
+	D_ASSERT(view.kind == ParquetGroupKind::OBJECT);
+	for (idx_t i = 0; i < view.fields.size(); i++) {
+		if (view.field_names[i] == component.key) {
+			auto child = state.ResolveGroup(*view.fields[i], node.GroupIndex());
+			if (!child.IsMissing()) {
+				return child;
+			}
+			break;
+		}
+	}
+	//! Not shredded here - look in the binary overlay holding the leftover fields
+	if (node.BinaryData()) {
+		auto &metadata = state.GetMetadata();
+		st.Resolve(metadata, state.GetMetadataBlob());
+		if (!st.resolved[path_index]) {
+			return ParquetVariantNode::MakeMissing();
+		}
+		return ExtractObjectChildBinary(state, metadata, node.BinaryData(), node.BinaryEnd(),
+		                                st.field_ids[path_index]);
+	}
+	return ParquetVariantNode::MakeMissing();
+}
+
+struct ParquetVariantExtractSource {
+	ParquetVariantIterator &iterator;
+	VariantExtractPathState st;
+
+	bool Emit(idx_t row, VariantBuilder &builder) {
+		iterator.BeginRow(row);
+		auto node = iterator.Root(row);
+		for (idx_t i = 0; i < st.path.size(); i++) {
+			if (node.IsNull() || node.IsMissing()) {
+				break;
+			}
+			node = ExtractChild(iterator, st, node, i);
+		}
+		if (node.IsNull() || node.IsMissing()) {
+			return true;
+		}
+		if (node.GetTypeId() == VariantLogicalType::VARIANT_NULL) {
+			return true;
+		}
+		EmitIterator(node, builder);
+		return false;
+	}
+};
+
+} // namespace
+
+void VariantExtractTargeted(ParquetVariantIterator &iterator, const vector<VariantPathComponent> &path,
+                            Vector &result, idx_t count) {
+	ParquetVariantExtractSource source {iterator, VariantExtractPathState(path)};
+	BuildVariant(source, count, result);
 }
 
 namespace {

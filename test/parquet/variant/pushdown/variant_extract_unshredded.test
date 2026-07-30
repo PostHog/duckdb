@@ -1,0 +1,156 @@
+# name: test/parquet/variant/pushdown/variant_extract_unshredded.test
+# group: [pushdown]
+
+require parquet
+
+# Pure unshredded (metadata + value only) VARIANT files: extract pushdown must read them correctly
+statement ok
+COPY (
+	FROM (VALUES
+		({'field1': 'hello0', 'field2': 0::INTEGER, 'nested': {'a': 1::INTEGER, 'b': 'x'}}::VARIANT),
+		({'field1': 1::INTEGER, 'field2': 10::INTEGER, 'nested': {'a': 2::INTEGER, 'b': 'y'}}::VARIANT),
+		({'field1': NULL, 'field2': 20::INTEGER}::VARIANT),
+		({'field2': 30::INTEGER}::VARIANT),
+		({'other': 'no_field1'}::VARIANT),
+		(NULL::VARIANT),
+		([1::VARIANT, 2::VARIANT, 3::VARIANT]),
+		('scalar string'::VARIANT)
+	) t(v)
+) TO '{TEST_DIR}/variant_pushdown_unshredded.parquet' (SHREDDING {'v': 'VARIANT'});
+
+# The file must be written without a 'typed_value' (fully unshredded)
+query I
+SELECT COUNT(*) FROM parquet_schema('{TEST_DIR}/variant_pushdown_unshredded.parquet') WHERE name='typed_value';
+----
+0
+
+# Full scan roundtrip
+query I nosort
+SELECT v::VARCHAR FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet'
+----
+{'field1': hello0, 'field2': 0, 'nested': {'a': 1, 'b': x}}
+{'field1': 1, 'field2': 10, 'nested': {'a': 2, 'b': y}}
+{'field1': NULL, 'field2': 20}
+{'field2': 30}
+{'other': no_field1}
+NULL
+[1, 2, 3]
+scalar string
+
+# Extract with a pushed-down cast (previously hit "Vector::Shred can only be used on variant vectors")
+query I nosort
+SELECT v.field2::VARCHAR FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet'
+----
+0
+10
+20
+30
+NULL
+NULL
+NULL
+NULL
+
+# Extract integer field with filter
+query I nosort
+SELECT v.field2::INTEGER FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.field2::INTEGER >= 20
+----
+20
+30
+
+# Extract on a field that is absent from some rows' dictionaries (including rows without the key)
+query IT nosort
+SELECT v.field1::VARCHAR, v.field1 IS NULL FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet'
+----
+hello0	0
+1	0
+NULL	1
+NULL	1
+NULL	1
+NULL	1
+NULL	1
+NULL	1
+
+# Missing key extracts as NULL
+query I
+SELECT count(*) FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.no_such_key IS NULL
+----
+8
+
+# Nested path extraction
+query I nosort
+SELECT v.nested.a::INTEGER FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet'
+----
+1
+2
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+
+# Nested path extraction of a string
+query I nosort
+SELECT v.nested.b::VARCHAR FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.nested.b IS NOT NULL
+----
+x
+y
+
+# Extract of a whole nested object
+query I nosort
+SELECT v.nested::VARCHAR FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.nested IS NOT NULL
+----
+{'a': 1, 'b': x}
+{'a': 2, 'b': y}
+
+# Extract on a scalar (non-object) row yields NULL
+query I
+SELECT count(*) FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.field2 IS NULL
+----
+4
+
+# Group by on extracted values
+query IT nosort
+SELECT v.field2::INTEGER % 20 AS grp, count(*) FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.field2 IS NOT NULL GROUP BY grp ORDER BY grp
+----
+0	2
+10	2
+
+# Multiple different extracts of the same column
+query II nosort
+SELECT v.field2::INTEGER, v.nested.a::INTEGER FROM '{TEST_DIR}/variant_pushdown_unshredded.parquet' WHERE v.field2::INTEGER = 10
+----
+10	2
+
+# A second file with row-group-local metadata dictionaries that differ per row group
+statement ok
+COPY (
+	SELECT CASE
+		WHEN i < 5 THEN {'alpha': i::INTEGER}::VARIANT
+		ELSE {'beta': 'k' || i::VARCHAR, 'alpha': (i * 2)::INTEGER}::VARIANT
+	END AS v
+	FROM range(10) t(i)
+) TO '{TEST_DIR}/variant_pushdown_unshredded_dicts.parquet' (SHREDDING {'v': 'VARIANT'}, ROW_GROUP_SIZE 3);
+
+query I nosort
+SELECT v.alpha::INTEGER FROM '{TEST_DIR}/variant_pushdown_unshredded_dicts.parquet'
+----
+0
+1
+2
+3
+4
+10
+12
+14
+16
+18
+
+query I nosort
+SELECT v.beta::VARCHAR FROM '{TEST_DIR}/variant_pushdown_unshredded_dicts.parquet' WHERE v.beta IS NOT NULL
+----
+k5
+k6
+k7
+k8
+k9

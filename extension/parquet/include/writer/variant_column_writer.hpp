@@ -110,6 +110,11 @@ public:
 	static ScalarFunction GetTransformFunction();
 	static LogicalType TransformTypedValueRecursive(const LogicalType &type);
 
+	//! Mark the shredding as explicitly provided, the analyzer must not override it
+	void SetExplicitShredding() {
+		is_analyzed = true;
+	}
+
 private:
 	//! Whether the schema of the variant has been analyzed already
 	bool is_analyzed = false;
