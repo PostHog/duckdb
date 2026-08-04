@@ -8,7 +8,7 @@ runs:
       run: df -h
 
     - name: Free disk space (Ubuntu)
-      uses: endersonmenezes/free-disk-space@v3
+      uses: endersonmenezes/free-disk-space@7901478139cff6e9d44df5972fd8ab8fcade4db1 # v3.2.2
       if: runner.os == 'Linux'
       with:
         rm_cmd: "rmz" # apparently faster
