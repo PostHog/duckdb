@@ -14,6 +14,7 @@
 #include "duckdb/planner/table_filter.hpp"
 #include "duckdb/common/optional_idx.hpp"
 #include "duckdb/common/multi_file/multi_file_data.hpp"
+#include "duckdb/common/projection_index.hpp"
 #include "duckdb/planner/expression.hpp"
 #include "duckdb/common/open_file_info.hpp"
 
@@ -23,6 +24,20 @@ class BaseStatistics;
 class BaseUnionData;
 struct GlobalTableFunctionState;
 struct LocalTableFunctionState;
+
+//! Expression pushed down into the file reader (e.g. a pushed-down field extract), with the
+//! column index(es) it references so the reader can execute it over the scanned chunk.
+struct BaseFileReaderExpression {
+public:
+	BaseFileReaderExpression(unique_ptr<Expression> expr, vector<ColumnIndex> indexes)
+	    : expression(std::move(expr)), column_indexes(std::move(indexes)) {
+	}
+
+public:
+	unique_ptr<Expression> expression;
+	//! The column index(es) referenced by the expression
+	vector<ColumnIndex> column_indexes;
+};
 
 //! Parent class of single-file readers - this must be inherited from for readers implementing the MultiFileReader
 //! interface
@@ -46,7 +61,7 @@ public:
 	unique_ptr<TableFilterSet> filters;
 	//! Expression to execute for a given column (BEFORE executing the filter)
 	//! NOTE: this is only set when we have filters - it can be ignored for readers that don't have filter pushdown
-	unordered_map<column_t, unique_ptr<Expression>> expression_map;
+	unordered_map<ProjectionIndex, BaseFileReaderExpression> expression_map;
 	//! The final types for various expressions - this is ONLY used if UseCastMap() is explicitly enabled
 	unordered_map<column_t, LogicalType> cast_map;
 
