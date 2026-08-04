@@ -1,0 +1,39 @@
+# PostHog: the duckdb fork inherits upstream's CI estate, which predates the
+# org's GitHub Actions security rules (SHA-pinned actions, no workflow-level
+# secrets env, no inline expressions in run blocks, no secrets:inherit, no
+# pull_request_target). Remediating upstream's CI here would create permanent
+# merge conflicts on every upstream sync for zero security gain on files we do
+# not modify. Exempt the inherited files; PostHog-authored workflows (e.g.
+# .github/workflows/BundleStaticLibs.yml) remain fully scanned.
+.github/actions/ccache-action/action.yml
+.github/actions/cleanup_runner/action.yml
+.github/actions/setup-msvc-env/action.yml
+.github/actions/swap_space/action.yml
+.github/actions/trim-ccache/action.yml
+.github/workflows/Android.yml
+.github/workflows/CheckIssueForCodeFormatting.yml
+.github/workflows/DockerTests.yml
+.github/workflows/ExtendedTests.yml
+.github/workflows/Extensions.yml
+.github/workflows/ExtraTests.yml
+.github/workflows/InternalIssuesCreateMirror.yml
+.github/workflows/InternalIssuesUpdateMirror.yml
+.github/workflows/IssuesCloseStale.yml
+.github/workflows/Main.yml
+.github/workflows/MirrorDiscussions.yml
+.github/workflows/NeedsDocumentation.yml
+.github/workflows/NightlyTests.yml
+.github/workflows/OSX.yml
+.github/workflows/OnPR.yml
+.github/workflows/OnTag.yml
+.github/workflows/PRNeedsMaintainerApproval.yml
+.github/workflows/Regression.yml
+.github/workflows/StagedUpload.yml
+.github/workflows/Swift.yml
+.github/workflows/SwiftRelease.yml
+.github/workflows/Windows.yml
+.github/workflows/_extension_client_tests.yml
+.github/workflows/_extension_distribution.yml
+.github/workflows/_manual_extension_deploy.yml
+.github/workflows/cifuzz.yml
+.github/workflows/coverity.yml
