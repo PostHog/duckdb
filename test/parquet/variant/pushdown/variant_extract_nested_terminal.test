@@ -33,7 +33,7 @@ COPY (
 		({'obj': {'a': 1::INTEGER, 'b': 'one'}, 'tag': 'both'}::VARIANT),
 		({'obj': {'a': 2::INTEGER}, 'tag': 'only_a'}::VARIANT),
 		({'obj': {'b': 'only_b'}, 'tag': 'only_b'}::VARIANT),
-		({'obj': {'c': 42}, 'tag': 'empty'}::VARIANT)  # 1.5.5 port: no empty-struct literal; unshredded-field obj instead
+		({'obj': {'c': 42}, 'tag': 'empty'}::VARIANT) -- 1.5.5 port: no empty-struct literal; unshredded-field obj instead
 	) t(v)
 ) TO '{TEST_DIR}/variant_pushdown_nested_terminal_missing_fields.parquet' (
 	SHREDDING {'v': 'STRUCT(obj STRUCT(a INTEGER, b VARCHAR), tag VARCHAR)'}
