@@ -98,7 +98,7 @@ void ExpressionExecutor::ExecuteExpression(DataChunk &input, Vector &result, con
 	D_ASSERT(!expressions.empty());
 	auto &expression = expressions[0];
 	auto &state = states[0];
-	D_ASSERT(result.GetType().id() == expression->GetReturnType().id());
+	D_ASSERT(result.GetType().id() == expression->return_type.id());
 	Execute(*expression, state->root_state.get(), &sel, count, result);
 }
 
