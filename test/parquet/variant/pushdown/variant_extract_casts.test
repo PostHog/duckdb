@@ -39,19 +39,28 @@ COPY (
 	SHREDDING {'v': 'STRUCT(x SMALLINT)'}
 );
 
-query IIII
+# 1.5.5 port note: direct mixed-type variant comparison requires main's nested-comparison
+# semantics (#24037, ships with 1.6); on 1.5.5 it raises an Invalid Input Error.
+statement error
+SELECT count(*) FILTER (WHERE v.x = 5::INTEGER)
+FROM '{TEST_DIR}/variant_pushdown_casts.parquet';
+----
+explicit cast
+
+query III
 SELECT
-	count(*) FILTER (WHERE v.x = 5::INTEGER),
 	count(*) FILTER (WHERE v.x::SMALLINT = 5),
 	count(*) FILTER (WHERE v.x::BIGINT = 5),
 	count(*) FILTER (WHERE TRY(v.x::INTEGER) = 5)
 FROM '{TEST_DIR}/variant_pushdown_casts.parquet'
 ----
-1	2	2	2
+2	2	2
 
+# 1.5.5 port note: runs against the fully-shredded file — the mixed-type comparison
+# against the partially-shredded file raises on 1.5.5 (see above).
 query ITT
 SELECT v.x::SMALLINT, v.x::BIGINT::VARCHAR, v.x::VARCHAR
-FROM '{TEST_DIR}/variant_pushdown_casts.parquet'
+FROM '{TEST_DIR}/variant_pushdown_casts_fully.parquet'
 WHERE v.x = 5::INTEGER
 ----
 5	5	5
@@ -64,19 +73,23 @@ FROM '{TEST_DIR}/variant_pushdown_casts.parquet'
 ----
 2	1
 
-query I
+# 1.5.5 port note: variant-to-variant comparison over mixed inner types raises on 1.5.5
+# (main's #24037 nested-comparison semantics ship with 1.6).
+statement error
 SELECT count(*)
 FROM '{TEST_DIR}/variant_pushdown_casts.parquet'
 WHERE v.x = '5'::VARIANT
 ----
-1
+explicit cast
 
-query I
+# 1.5.5 port note: this file mixes numeric and string field values; the mixed
+# comparison raises on 1.5.5 (see above).
+statement error
 SELECT count(*)
 FROM '{TEST_DIR}/variant_pushdown_casts_unsigned.parquet'
 WHERE v.x = 5::INTEGER
 ----
-1
+explicit cast
 
 query III
 SELECT
