@@ -439,12 +439,10 @@ static bool IsFullyShredded(const BaseStatistics &variant_stats, const ColumnInd
 
 optional_ptr<const BaseStatistics> ParquetReader::GetVariantStats(const ParquetColumnSchema &schema) const {
 	D_ASSERT(schema.schema_type == ParquetColumnSchemaType::VARIANT);
-	D_ASSERT(schema.schema_index.IsValid());
-	const auto cache_key = schema.schema_index.GetIndex();
 
 	{
 		const lock_guard<mutex> guard(variant_stats_lock);
-		auto entry = variant_stats_cache.find(cache_key);
+		auto entry = variant_stats_cache.find(&schema);
 		if (entry != variant_stats_cache.end()) {
 			D_ASSERT(entry->second);
 			return *entry->second;
@@ -457,7 +455,7 @@ optional_ptr<const BaseStatistics> ParquetReader::GetVariantStats(const ParquetC
 	}
 
 	const lock_guard<mutex> guard(variant_stats_lock);
-	auto res = variant_stats_cache.emplace(cache_key, std::move(variant_stats));
+	auto res = variant_stats_cache.emplace(&schema, std::move(variant_stats));
 	return *res.first->second;
 }
 

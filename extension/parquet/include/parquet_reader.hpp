@@ -274,7 +274,10 @@ private:
 private:
 	unique_ptr<CachingFileHandle> file_handle;
 	mutable mutex variant_stats_lock;
-	mutable unordered_map<idx_t, unique_ptr<BaseStatistics>> variant_stats_cache;
+	//! Keyed by schema address: schemas are reader-owned and stable for the reader's lifetime.
+	//! (1.5.5 port note: main keys by schema.schema_index, but 1.5.5 only populates schema_index
+	//! in the writer path.)
+	mutable unordered_map<const ParquetColumnSchema *, unique_ptr<BaseStatistics>> variant_stats_cache;
 };
 
 } // namespace duckdb
