@@ -13,6 +13,7 @@
 #include "mbedtls_wrapper.hpp"
 #include "reader/row_number_column_reader.hpp"
 #include "reader/variant_column_reader.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 #include "reader/struct_column_reader.hpp"
 #include "thrift_tools.hpp"
 #include "duckdb/main/config.hpp"
