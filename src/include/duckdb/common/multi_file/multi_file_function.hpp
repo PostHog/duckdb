@@ -374,7 +374,7 @@ public:
 			auto local_idx = MultiFileLocalIndex(i);
 			auto local_id = local_column_ids[local_idx];
 			auto cast_entry = reader.cast_map.find(local_id);
-			auto expr_entry = reader.expression_map.find(ProjectionIndex(i));
+			auto expr_entry = reader.expression_map.find(ProjectionIndex(static_cast<idx_t>(local_id)));
 			if (cast_entry != reader.cast_map.end()) {
 				intermediate_chunk_types.push_back(cast_entry->second);
 			} else if (expr_entry != reader.expression_map.end()) {

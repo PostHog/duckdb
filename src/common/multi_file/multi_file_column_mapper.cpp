@@ -1163,7 +1163,10 @@ unique_ptr<TableFilterSet> MultiFileColumnMapper::CreateFilters(map<idx_t, refer
 			for (idx_t i = 0; i < unique_ref_count; i++) {
 				expression_column_indexes.push_back(reader.column_indexes[local_id + i]);
 			}
-			reader.expression_map.emplace(ProjectionIndex(local_id),
+			//! 1.5.5 port note: key by the referenced column's PRIMARY index — the root
+			//! reader's children are indexed by primary (file) position, and CreateReader
+			//! installs the wrapping ExpressionColumnReader at the key position.
+			reader.expression_map.emplace(ProjectionIndex(reader.column_indexes[local_id].GetPrimaryIndex()),
 			                              BaseFileReaderExpression(std::move(expr), expression_column_indexes));
 
 			// reset the expression - since we are evaluating it in the reader we can just reference it

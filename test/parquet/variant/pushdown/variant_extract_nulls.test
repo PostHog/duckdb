@@ -3,6 +3,10 @@
 
 require parquet
 
+mode skip
+# 1.5.5 port: writes UNSHREDDED variant parquet (SHREDDING NULL) — requires the
+# unshredded-write support from posthog a9dcee6f96 (next patchline stage). Unskip there.
+
 foreach disabled true false
 
 onlyif disabled=true
