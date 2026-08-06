@@ -605,15 +605,20 @@ unique_ptr<ColumnReader> ParquetReader::CreateReader(ClientContext &context) con
 	// add expressions if required
 	auto &root_struct_reader = ret->Cast<StructColumnReader>();
 	for (auto &entry : expression_map) {
-		auto column_id = entry.first.GetIndex();
-		auto &expression = entry.second.expression;
+		auto &expression_data = entry.second;
+		auto &expression = expression_data.expression;
+		auto &expression_column_indexes = expression_data.column_indexes;
+		D_ASSERT(!expression_column_indexes.empty());
+
 		vector<unique_ptr<ColumnReader>> expr_children;
-		expr_children.push_back(std::move(root_struct_reader.child_readers[column_id]));
+		for (auto &id : expression_column_indexes) {
+			expr_children.push_back(std::move(root_struct_reader.child_readers[id.GetPrimaryIndex()]));
+		}
 		auto expr_schema = make_uniq<ParquetColumnSchema>(ParquetColumnSchema::FromParentSchema(
 		    expr_children[0]->Schema(), expression->return_type, ParquetColumnSchemaType::EXPRESSION));
 		auto expr_reader = make_uniq<ExpressionColumnReader>(context, std::move(expr_children), expression->Copy(),
 		                                                     std::move(expr_schema));
-		root_struct_reader.child_readers[column_id] = std::move(expr_reader);
+		root_struct_reader.child_readers[entry.first.GetIndex()] = std::move(expr_reader);
 	}
 	return ret;
 }
