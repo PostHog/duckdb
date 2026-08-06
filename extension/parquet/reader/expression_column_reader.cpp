@@ -2,7 +2,6 @@
 
 #include "parquet_reader.hpp"
 #include "duckdb/common/types/vector.hpp"
-#include "duckdb/common/vector/flat_vector.hpp"
 
 namespace duckdb {
 
