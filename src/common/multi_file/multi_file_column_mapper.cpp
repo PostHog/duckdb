@@ -1071,14 +1071,14 @@ static idx_t StartIndexAtZero(unique_ptr<Expression> &root_expr) {
 	//! First gather all references, sorted by their index
 	ExpressionIterator::VisitExpressionMutable<BoundReferenceExpression>(
 	    root_expr, [&reference_map](BoundReferenceExpression &ref, unique_ptr<Expression> &expr) {
-		    reference_map[ref.Index()].push_back(ref);
+		    reference_map[ref.index].push_back(ref);
 	    });
 	idx_t new_index = 0;
 	//! Then assign all the references a new index, starting at 0
-	for (auto &[_, references] : reference_map) {
+	for (auto &entry : reference_map) {
 		auto index = new_index++;
-		for (auto &ref : references) {
-			ref.get().IndexMutable() = index;
+		for (auto &ref : entry.second) {
+			ref.get().index = index;
 		}
 	}
 	return new_index;
@@ -1157,7 +1157,7 @@ unique_ptr<TableFilterSet> MultiFileColumnMapper::CreateFilters(map<idx_t, refer
 			// we need to set the index of the references inside the expression to 0
 			auto &expr = reader_data.expressions[global_index];
 			auto unique_ref_count = StartIndexAtZero(expr);
-			auto expression_type = expr->GetReturnType();
+			auto expression_type = expr->return_type;
 
 			vector<ColumnIndex> expression_column_indexes;
 			for (idx_t i = 0; i < unique_ref_count; i++) {
