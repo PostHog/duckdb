@@ -383,7 +383,9 @@ unique_ptr<ColumnReader> GeometryColumnReader::Create(const ParquetReader &reade
 	func.name = "ST_GeomFromWKB";
 	auto read_expr = make_uniq_base<Expression, BoundFunctionExpression>(schema.type, func, std::move(args), nullptr);
 	auto type_expr = BoundCastExpression::AddDefaultCastToType(std::move(read_expr), schema.type);
-	return make_uniq<ExpressionColumnReader>(context, std::move(string_reader), std::move(type_expr), schema);
+	vector<unique_ptr<ColumnReader>> expr_children;
+	expr_children.push_back(std::move(string_reader));
+	return make_uniq<ExpressionColumnReader>(context, std::move(expr_children), std::move(type_expr), schema);
 }
 
 } // namespace duckdb
