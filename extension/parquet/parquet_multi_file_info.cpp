@@ -413,6 +413,7 @@ TableFunctionSet ParquetScanFunction::GetFunctionSet() {
 	table_function.pushdown_expression = ParquetScanPushdownExpression;
 	table_function.get_partition_stats = ParquetGetPartitionStats;
 	table_function.get_metrics = ParquetGetMetrics;
+	table_function.supports_pushdown_extract = ParquetScanSupportPushdownExtract;
 	table_function.filter_pushdown = true;
 	table_function.filter_prune = true;
 	table_function.late_materialization = true;
