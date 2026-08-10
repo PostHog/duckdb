@@ -4,6 +4,11 @@
 require parquet
 
 mode skip
+# 1.5.5 port: queries here rely on main's nested-comparison semantics (#24037, ships with 1.6) —
+# mixed-type variant comparisons raise on 1.5.5. Unshredded writes themselves are supported.
+# Unskip when #24037 lands (or at the 1.6 upgrade).
+
+mode skip
 # 1.5.5 port: the disabled=true iteration writes UNSHREDDED variant parquet (SHREDDING NULL),
 # which requires the unshredded-write support from posthog a9dcee6f96 (next patchline stage).
 # Unskip there.
