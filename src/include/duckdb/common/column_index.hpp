@@ -128,6 +128,15 @@ public:
 		return child_indexes;
 	}
 
+	ColumnIndex RemapRootIndex(idx_t new_index) const {
+		auto res = *this;
+		if (!has_index) {
+			throw InternalException("Can't perform 'RemapRootIndex' on ColumnIndex without a primary index!");
+		}
+		res.index = new_index;
+		return res;
+	}
+
 	bool IsPushdownExtract() const {
 		return index_type == ColumnIndexType::PUSHDOWN_EXTRACT;
 	}

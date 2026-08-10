@@ -9,6 +9,7 @@
 #pragma once
 
 #include "column_reader.hpp"
+#include "duckdb/common/types/variant_value.hpp"
 #include "reader/templated_column_reader.hpp"
 
 namespace duckdb {
@@ -49,6 +50,19 @@ public:
 protected:
 	idx_t metadata_reader_idx;
 	idx_t value_reader_idx;
+
+	//! Targeted pushdown-extract state (1.5.5 port): per-row-group caches so binary
+	//! navigation doesn't re-decode the shared metadata dictionary per row.
+public:
+	struct VariantMetadataCacheEntry;
+
+protected:
+	unordered_map<string, shared_ptr<VariantMetadataCacheEntry>> binary_metadata_cache;
+
+public:
+	VariantMetadataCacheEntry &GetBinaryMetadata(const string_t &blob);
+	vector<VariantValue> NavigateBinaryExtract(Vector &metadata_col, Vector &value_col, data_ptr_t define_out,
+	                                           idx_t num_values);
 };
 
 } // namespace duckdb

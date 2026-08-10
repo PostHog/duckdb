@@ -88,6 +88,204 @@ static LogicalType GetIntermediateGroupType(optional_ptr<ColumnReader> typed_val
 	return LogicalType::STRUCT(std::move(children));
 }
 
+
+//===--------------------------------------------------------------------===//
+// Targeted pushdown extract (1.5.5 port of posthog a9dcee6f96's navigation)
+//
+// For unshredded (2-child) variant columns, navigate the binary value along
+// the pushed-down path and decode ONLY the addressed leaf, instead of
+// converting every row's entire value (and re-decoding it in VariantExtract).
+// The metadata dictionary is decoded once per distinct blob content — writers
+// emit identical metadata per row — and key->field-id resolution is cached
+// per dictionary.
+//===--------------------------------------------------------------------===//
+
+struct VariantColumnReader::VariantMetadataCacheEntry {
+	explicit VariantMetadataCacheEntry(const string_t &blob) : metadata(blob) {
+		for (idx_t id = 0; id < metadata.strings.size(); id++) {
+			field_ids.emplace(metadata.strings[id], id);
+		}
+	}
+	VariantMetadata metadata;
+	//! key -> dictionary field id, resolved once per distinct dictionary
+	unordered_map<string, idx_t> field_ids;
+};
+
+VariantColumnReader::VariantMetadataCacheEntry &VariantColumnReader::GetBinaryMetadata(const string_t &blob) {
+	auto key = blob.GetString();
+	auto entry = binary_metadata_cache.find(key);
+	if (entry != binary_metadata_cache.end()) {
+		return *entry->second;
+	}
+	//! Bound the cache — dictionaries are shared across a row group, so a handful of
+	//! entries covers the working set; clear rather than grow unboundedly on pathological files.
+	if (binary_metadata_cache.size() >= 1024) {
+		binary_metadata_cache.clear();
+	}
+	auto res = binary_metadata_cache.emplace(key, make_shared_ptr<VariantMetadataCacheEntry>(blob));
+	return *res.first->second;
+}
+
+namespace {
+
+uint32_t VariantReadLE(uint8_t size, const_data_ptr_t data, idx_t offset, idx_t data_size) {
+	if (offset + size > data_size) {
+		throw IOException("Corrupted VARIANT 'value' buffer");
+	}
+	switch (size) {
+	case 1:
+		return Load<uint8_t>(data + offset);
+	case 2:
+		return Load<uint16_t>(data + offset);
+	case 3: {
+		uint32_t result = 0;
+		memcpy(&result, data + offset, 3);
+		return result;
+	}
+	case 4:
+		return Load<uint32_t>(data + offset);
+	default:
+		throw IOException("Corrupted VARIANT field size (%d)", size);
+	}
+}
+
+//! data_offset points at the value header of an OBJECT; on success it is advanced to the
+//! value header of the child named 'key'. Returns false when the value is not an object or
+//! the key is absent in this row.
+bool NavigateVariantObject(const VariantColumnReader::VariantMetadataCacheEntry &cache, const_data_ptr_t data,
+                           idx_t data_size, idx_t &data_offset, const string &key) {
+	if (data_offset >= data_size) {
+		throw IOException("Corrupted VARIANT 'value' buffer");
+	}
+	auto value_metadata = VariantValueMetadata::FromHeaderByte(data[data_offset]);
+	if (value_metadata.basic_type != VariantBasicType::OBJECT) {
+		return false;
+	}
+	data_offset++;
+
+	idx_t num_elements;
+	if (value_metadata.is_large) {
+		num_elements = VariantReadLE(4, data, data_offset, data_size);
+		data_offset += sizeof(uint32_t);
+	} else {
+		num_elements = VariantReadLE(1, data, data_offset, data_size);
+		data_offset += sizeof(uint8_t);
+	}
+
+	auto wanted = cache.field_ids.find(key);
+	if (wanted == cache.field_ids.end()) {
+		return false; //! the dictionary has no such key — the row cannot contain it
+	}
+
+	auto field_ids_offset = data_offset;
+	auto field_offsets_offset = field_ids_offset + (num_elements * value_metadata.field_id_size);
+	auto values_offset = field_offsets_offset + ((num_elements + 1) * value_metadata.field_offset_size);
+
+	for (idx_t i = 0; i < num_elements; i++) {
+		auto field_id = VariantReadLE(value_metadata.field_id_size, data, field_ids_offset + (i * value_metadata.field_id_size), data_size);
+		if (field_id != wanted->second) {
+			continue;
+		}
+		auto value_offset = VariantReadLE(value_metadata.field_offset_size, data,
+		                                  field_offsets_offset + (i * value_metadata.field_offset_size), data_size);
+		data_offset = values_offset + value_offset;
+		if (data_offset >= data_size) {
+			throw IOException("Corrupted VARIANT 'value' buffer");
+		}
+		return true;
+	}
+	return false;
+}
+
+//! Same as NavigateVariantObject but for ARRAYs: advances data_offset to element 'index'.
+bool NavigateVariantArray(const_data_ptr_t data, idx_t data_size, idx_t &data_offset, uint32_t index) {
+	if (data_offset >= data_size) {
+		throw IOException("Corrupted VARIANT 'value' buffer");
+	}
+	auto value_metadata = VariantValueMetadata::FromHeaderByte(data[data_offset]);
+	if (value_metadata.basic_type != VariantBasicType::ARRAY) {
+		return false;
+	}
+	data_offset++;
+
+	idx_t num_elements;
+	if (value_metadata.is_large) {
+		num_elements = VariantReadLE(4, data, data_offset, data_size);
+		data_offset += sizeof(uint32_t);
+	} else {
+		num_elements = VariantReadLE(1, data, data_offset, data_size);
+		data_offset += sizeof(uint8_t);
+	}
+	if (index >= num_elements) {
+		return false;
+	}
+	auto field_offsets_offset = data_offset;
+	auto values_offset = field_offsets_offset + ((num_elements + 1) * value_metadata.field_offset_size);
+	auto value_offset =
+	    VariantReadLE(value_metadata.field_offset_size, data, field_offsets_offset + (index * value_metadata.field_offset_size), data_size);
+	data_offset = values_offset + value_offset;
+	if (data_offset >= data_size) {
+		throw IOException("Corrupted VARIANT 'value' buffer");
+	}
+	return true;
+}
+
+} // anonymous namespace
+
+vector<VariantValue> VariantColumnReader::NavigateBinaryExtract(Vector &metadata_col, Vector &value_col,
+                                                                data_ptr_t define_out, idx_t num_values) {
+	UnifiedVectorFormat metadata_format, value_format;
+	metadata_col.ToUnifiedFormat(num_values, metadata_format);
+	value_col.ToUnifiedFormat(num_values, value_format);
+	auto metadata_strings = UnifiedVectorFormat::GetData<string_t>(metadata_format);
+	auto value_strings = UnifiedVectorFormat::GetData<string_t>(value_format);
+
+	vector<VariantValue> result;
+	result.reserve(num_values);
+	for (idx_t i = 0; i < num_values; i++) {
+		if (define_out[i] < MaxDefine()) {
+			//! NULL row
+			result.emplace_back();
+			continue;
+		}
+		auto midx = metadata_format.sel->get_index(i);
+		auto vidx = value_format.sel->get_index(i);
+		if (!metadata_format.validity.RowIsValid(midx) || !value_format.validity.RowIsValid(vidx)) {
+			result.emplace_back();
+			continue;
+		}
+		auto &value_blob = value_strings[vidx];
+		auto data = const_data_ptr_cast(value_blob.GetData());
+		auto data_size = value_blob.GetSize();
+
+		idx_t data_offset = 0;
+		bool found = true;
+		for (auto &component : extract_path) {
+			switch (component.lookup_mode) {
+			case VariantChildLookupMode::BY_KEY:
+				found = NavigateVariantObject(GetBinaryMetadata(metadata_strings[midx]), data, data_size, data_offset,
+				                              component.key);
+				break;
+			case VariantChildLookupMode::BY_INDEX:
+				found = NavigateVariantArray(data, data_size, data_offset, component.index);
+				break;
+			default:
+				throw InternalException("Invalid variant path lookup mode in targeted extract");
+			}
+			if (!found) {
+				break;
+			}
+		}
+		if (!found) {
+			result.emplace_back();
+			continue;
+		}
+		auto &cache = GetBinaryMetadata(metadata_strings[midx]);
+		result.push_back(VariantBinaryDecoder::Decode(cache.metadata, data, data_offset, data_size));
+	}
+	return result;
+}
+
 idx_t VariantColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data_ptr_t repeat_out, Vector &result) {
 	if (pending_skips > 0) {
 		throw InternalException("VariantColumnReader cannot have pending skips");
@@ -124,6 +322,15 @@ idx_t VariantColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data
 			throw InvalidInputException(
 			    "The shredded Variant column did not contain the same amount of values for 'typed_value' and 'value'");
 		}
+	}
+	if (index.IsPushdownExtract() && !typed_value_reader) {
+		//! Unshredded column with a pushed-down extract: navigate the binary values directly,
+		//! skipping the full Convert + ToVARIANT + re-decode round trip.
+		D_ASSERT(!extract_path.empty());
+		auto targeted = NavigateBinaryExtract(metadata_intermediate, value_intermediate, define_out, num_values);
+		VariantValue::ToVARIANT(targeted, result);
+		read_count = value_values;
+		return read_count.GetIndex();
 	}
 	intermediate =
 	    VariantShreddedConversion::Convert(metadata_intermediate, intermediate_group, 0, num_values, num_values);

@@ -566,7 +566,9 @@ static ColumnMapResult MapColumn(ClientContext &context, const MultiFileColumnDe
 	if (global_column.children.empty()) {
 		// not a struct - map the column directly
 		result.column_map = Value(local_column.name);
-		result.column_index = make_uniq<ColumnIndex>(local_id.GetId());
+		//! Preserve the global index's structure (pushdown-extract markers, child paths, types),
+		//! rebased onto the local column position (posthog 1.5.5 port of main's RemapRootIndex flow).
+		result.column_index = make_uniq<ColumnIndex>(global_index.RemapRootIndex(local_id.GetId()));
 		result.mapping = std::move(mapping);
 		result.local_column = local_column;
 		return result;

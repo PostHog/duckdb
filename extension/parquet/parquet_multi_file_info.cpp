@@ -406,7 +406,7 @@ TableFunctionSet ParquetScanFunction::GetFunctionSet() {
 	table_function.named_parameters["encryption_config"] = LogicalTypeId::ANY;
 	table_function.named_parameters["parquet_version"] = LogicalType::VARCHAR;
 	table_function.named_parameters["can_have_nan"] = LogicalType::BOOLEAN;
-	table_function.statistics = MultiFileFunction<ParquetMultiFileInfo>::MultiFileScanStats;
+	table_function.statistics_extended = MultiFileFunction<ParquetMultiFileInfo>::MultiFileScanStatsExtended;
 	table_function.serialize = ParquetScanSerialize;
 	table_function.deserialize = ParquetScanDeserialize;
 	table_function.get_row_id_columns = ParquetGetRowIdColumns;

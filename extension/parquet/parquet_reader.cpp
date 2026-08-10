@@ -529,8 +529,16 @@ unique_ptr<ColumnReader> ParquetReader::CreateReaderRecursive(ClientContext &con
 		} else {
 			for (idx_t i = 0; i < indexes.size(); i++) {
 				auto child_index = indexes[i].GetPrimaryIndex();
+				auto &child_schema = schema.children[child_index];
+				if (child_schema.schema_type == ParquetColumnSchemaType::VARIANT && indexes[i].IsPushdownExtract()) {
+					//! VARIANT pushdown: the marked column index must reach the VARIANT branch as the
+					//! parent (its children are the extract path) — main's column_id semantics.
+					vector<ColumnIndex> variant_parent {indexes[i]};
+					children[child_index] = CreateReaderRecursive(context, variant_parent, child_schema);
+					continue;
+				}
 				children[child_index] =
-				    CreateReaderRecursive(context, indexes[i].GetChildIndexes(), schema.children[child_index]);
+				    CreateReaderRecursive(context, indexes[i].GetChildIndexes(), child_schema);
 			}
 		}
 		switch (schema.type.id()) {
@@ -550,34 +558,33 @@ unique_ptr<ColumnReader> ParquetReader::CreateReaderRecursive(ClientContext &con
 		}
 		vector<unique_ptr<ColumnReader>> children;
 		children.resize(schema.children.size());
-		if (schema.children.size() != 3 || indexes.empty() || !indexes[0].IsPushdownExtract()) {
+		if (indexes.empty() || !indexes[0].IsPushdownExtract()) {
 			for (idx_t child_index = 0; child_index < schema.children.size(); child_index++) {
 				children[child_index] = CreateReaderRecursive(context, indexes, schema.children[child_index]);
 			}
 			return make_uniq<VariantColumnReader>(context, *this, schema, std::move(children));
 		}
-		//! VARIANT is shredded -  it has a 'typed_value' column
-		//! And the extract is pushed down into the scan (1.5.5: the marked path root arrives as indexes[0])
-		auto &typed_value_schema = schema.children[2];
-		D_ASSERT(typed_value_schema.name == "typed_value");
-		auto variant_stats = GetVariantStats(schema);
+		//! The extract is pushed down into the scan (1.5.5: the marked path root arrives as indexes[0]).
+		//! UNSHREDDED (2-child) columns take the same pushdown path as shredded ones — the
+		//! VariantColumnReader performs the targeted binary navigation at Read (a9dcee6f96 parity).
+		if (schema.children.size() == 3) {
+			//! VARIANT is shredded -  it has a 'typed_value' column
+			auto &typed_value_schema = schema.children[2];
+			D_ASSERT(typed_value_schema.name == "typed_value");
+			auto variant_stats = GetVariantStats(schema);
 
-		//! Synthesize the marked parent index the PR's helpers expect (they start at its first child)
-		ColumnIndex variant_index;
-		variant_index.SetPushdownExtract();
-		variant_index.AddChildIndex(indexes[0]);
-
-		if (variant_stats && IsFullyShredded(*variant_stats, variant_index)) {
+			if (variant_stats && IsFullyShredded(*variant_stats, indexes[0])) {
 			//! This field is present in 'typed_value' across all rowgroups
 			//! So we can directly push a struct extract into 'typed_value' and ignore 'value'+'metadata'
-			auto typed_value_index = CreateVariantTypedValuePushdown(typed_value_schema, variant_index);
+			auto typed_value_index = CreateVariantTypedValuePushdown(typed_value_schema, indexes[0]);
 			return CreateReaderRecursive(context, typed_value_index.GetChildIndexes(), typed_value_schema);
+			}
 		}
-		for (idx_t child_index = 0; child_index < 3; child_index++) {
+		for (idx_t child_index = 0; child_index < schema.children.size(); child_index++) {
 			children[child_index] = CreateReaderRecursive(context, indexes, schema.children[child_index]);
 		}
 		//! Create the VariantColumnReader with the marked parent index, so it can perform the extract at Read
-		auto column_reader = make_uniq<VariantColumnReader>(context, *this, schema, std::move(children), variant_index);
+		auto column_reader = make_uniq<VariantColumnReader>(context, *this, schema, std::move(children), indexes[0]);
 
 		auto scan_type = indexes[0].GetScanType();
 		if (scan_type.id() == LogicalTypeId::VARIANT) {
