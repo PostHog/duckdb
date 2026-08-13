@@ -657,6 +657,13 @@ void RemoveUnusedColumns::CheckPushdownExtract(LogicalOperator &op) {
 				//! Either not a struct, or we're not using struct field projection pushdown - skip it
 				continue;
 			}
+			//! Stage-scoped (posthog 1.5.5): multiple pushed extracts on ONE variant column require
+			//! reader-tree-per-extract (page-state interleave breaks) — fall back to a full-column
+			//! scan + function extracts, which is correct everywhere today.
+			if (!col.bindings.empty() && col.bindings[0].get().return_type.id() == LogicalTypeId::VARIANT &&
+			    col.struct_extracts.size() > 1) {
+				col.supports_pushdown_extract = PushdownExtractSupport::DISABLED;
+			}
 			if (col.supports_pushdown_extract == PushdownExtractSupport::DISABLED) {
 				//! We're already not using pushdown extract for this column, no need to check with the scan
 				continue;

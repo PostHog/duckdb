@@ -558,16 +558,24 @@ unique_ptr<ColumnReader> ParquetReader::CreateReaderRecursive(ClientContext &con
 		}
 		vector<unique_ptr<ColumnReader>> children;
 		children.resize(schema.children.size());
-		if (indexes.empty() || !indexes[0].IsPushdownExtract()) {
+		//! Marked for pushdown (2- or 3-child): build the children fully and hand the marked
+		//! index to the reader, which performs the extract at Read — 2-child via targeted binary
+		//! navigation, 3-child via the vanilla conversion + VariantExtract. (The fully-shredded
+		//! typed_value early-return stays unported for now.) The marked field-name path must not
+		//! recurse into the generic COLUMN branch (numeric positions only) — hence empty indexes.
+		//! Marked (2- or 3-child) variants take the pushdown branch: the reader gets the marked
+		//! index and performs the extract at Read (2-child via targeted binary navigation, 3-child
+		//! via the vanilla conversion + VariantExtract). Only the fully-shredded typed_value
+		//! early-return stays unported (gated below). Unmarked reads are vanilla.
+		bool pushdown_ok = !indexes.empty() && indexes[0].IsPushdownExtract();
+		if (!pushdown_ok) {
 			for (idx_t child_index = 0; child_index < schema.children.size(); child_index++) {
-				children[child_index] = CreateReaderRecursive(context, indexes, schema.children[child_index]);
+				vector<ColumnIndex> no_indexes;
+				children[child_index] = CreateReaderRecursive(context, no_indexes, schema.children[child_index]);
 			}
 			return make_uniq<VariantColumnReader>(context, *this, schema, std::move(children));
 		}
-		//! The extract is pushed down into the scan (1.5.5: the marked path root arrives as indexes[0]).
-		//! UNSHREDDED (2-child) columns take the same pushdown path as shredded ones — the
-		//! VariantColumnReader performs the targeted binary navigation at Read (a9dcee6f96 parity).
-		if (schema.children.size() == 3) {
+		if (false && schema.children.size() == 3) {
 			//! VARIANT is shredded -  it has a 'typed_value' column
 			auto &typed_value_schema = schema.children[2];
 			D_ASSERT(typed_value_schema.name == "typed_value");
@@ -577,11 +585,17 @@ unique_ptr<ColumnReader> ParquetReader::CreateReaderRecursive(ClientContext &con
 			//! This field is present in 'typed_value' across all rowgroups
 			//! So we can directly push a struct extract into 'typed_value' and ignore 'value'+'metadata'
 			auto typed_value_index = CreateVariantTypedValuePushdown(typed_value_schema, indexes[0]);
+			for (auto &ci2 : typed_value_index.GetChildIndexes()) {
+			}
 			return CreateReaderRecursive(context, typed_value_index.GetChildIndexes(), typed_value_schema);
 			}
 		}
 		for (idx_t child_index = 0; child_index < schema.children.size(); child_index++) {
-			children[child_index] = CreateReaderRecursive(context, indexes, schema.children[child_index]);
+			//! The marked parent index is ONLY for the reader's extract state — children are built
+			//! fully (empty indexes), because 1.5.5's COLUMN branch treats a non-empty index list
+			//! as child selection (a bare positional ColumnIndex(child_index) would mis-select).
+			vector<ColumnIndex> no_indexes;
+			children[child_index] = CreateReaderRecursive(context, no_indexes, schema.children[child_index]);
 		}
 		//! Create the VariantColumnReader with the marked parent index, so it can perform the extract at Read
 		auto column_reader = make_uniq<VariantColumnReader>(context, *this, schema, std::move(children), indexes[0]);

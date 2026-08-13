@@ -566,9 +566,15 @@ static ColumnMapResult MapColumn(ClientContext &context, const MultiFileColumnDe
 	if (global_column.children.empty()) {
 		// not a struct - map the column directly
 		result.column_map = Value(local_column.name);
-		//! Preserve the global index's structure (pushdown-extract markers, child paths, types),
-		//! rebased onto the local column position (posthog 1.5.5 port of main's RemapRootIndex flow).
-		result.column_index = make_uniq<ColumnIndex>(global_index.RemapRootIndex(local_id.GetId()));
+		//! For VARIANT pushdown extracts, preserve the global index's structure (marker, child path,
+		//! types), rebased onto the local column position (posthog 1.5.5 port of main's RemapRootIndex
+		//! flow). Everything else keeps 1.5.5's bare local index — the bare index is load-bearing for
+		//! struct pushdown's parent-typed scan slot layout.
+		if (global_index.IsPushdownExtract() && global_column.type.id() == LogicalTypeId::VARIANT) {
+			result.column_index = make_uniq<ColumnIndex>(global_index.RemapRootIndex(local_id.GetId()));
+		} else {
+			result.column_index = make_uniq<ColumnIndex>(local_id.GetId());
+		}
 		result.mapping = std::move(mapping);
 		result.local_column = local_column;
 		return result;

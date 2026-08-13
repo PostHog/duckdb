@@ -380,8 +380,16 @@ public:
 			} else if (expr_entry != reader.expression_map.end()) {
 				intermediate_chunk_types.push_back(expr_entry->second.expression->return_type);
 			} else {
-				auto &col = local_columns[local_id];
-				intermediate_chunk_types.push_back(col.type);
+				//! A pushed-down extract column's slot takes the marked index's scan type (the
+				//! extract/cast target), not the parent local column's type (posthog 1.5.5 port).
+				auto marked_idx = static_cast<idx_t>(local_id);
+				if (marked_idx < reader.column_indexes.size() && reader.column_indexes[marked_idx].IsPushdownExtract() &&
+				    reader.column_indexes[marked_idx].HasType()) {
+					intermediate_chunk_types.push_back(reader.column_indexes[marked_idx].GetScanType());
+				} else {
+					auto &col = local_columns[local_id];
+					intermediate_chunk_types.push_back(col.type);
+				}
 			}
 		}
 		lstate.scan_chunk.Destroy();

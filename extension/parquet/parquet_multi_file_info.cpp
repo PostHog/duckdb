@@ -193,7 +193,11 @@ static bool ParquetScanSupportPushdownExtract(const FunctionData &bind_data_p, c
 
 	auto &column = bind_data.columns[col_idx.index];
 	auto &column_type = column.type;
-	return column_type.id() == LogicalTypeId::STRUCT || column_type.id() == LogicalTypeId::VARIANT;
+	//! Stage-scoped (posthog 1.5.5 port): VARIANT only. The statistics_extended swap also un-gates
+	//! the filter path for STRUCT columns, and the ported expression flow there regresses struct
+	//! filter/projection tests (type/position layout bugs) — struct keeps its vanilla behavior
+	//! (the projection path enables it separately, as on 1.5.5).
+	return column_type.id() == LogicalTypeId::VARIANT;
 }
 
 static void VerifyParquetSchemaParameter(const Value &schema) {

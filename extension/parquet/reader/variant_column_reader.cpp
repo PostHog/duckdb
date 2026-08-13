@@ -335,6 +335,8 @@ idx_t VariantColumnReader::Read(uint64_t num_values, data_ptr_t define_out, data
 	intermediate =
 	    VariantShreddedConversion::Convert(metadata_intermediate, intermediate_group, 0, num_values, num_values);
 	VariantValue::ToVARIANT(intermediate, result);
+	fprintf(stderr, "EXDBG Read: index_pd=%d index_has_index=%d index_nchildren=%zu path=%zu\n", (int)index.IsPushdownExtract(),
+	        (int)index.HasPrimaryIndex(), index.GetChildIndexes().size(), extract_path.size());
 	if (index.IsPushdownExtract()) {
 		D_ASSERT(!extract_path.empty());
 		Vector extract_result(LogicalType::VARIANT(), num_values);
