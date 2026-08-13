@@ -18,11 +18,33 @@
 #include "duckdb/common/vector.hpp"
 #include "duckdb/common/vector/unified_vector_format.hpp"
 #include "duckdb/function/scalar/variant_utils.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/settings.hpp"
 #include "parquet_column_schema.hpp"
 
 namespace duckdb {
 
+//! Mirrors EnableShredding in storage/table/variant_column_data.cpp: -1 disables
+//! shredding entirely, otherwise shred only when the analyzed row count reaches
+//! the minimum. Auto-shredding unions every distinct object key across the row
+//! group into a typed_value STRUCT field, so its memory footprint scales with
+//! key cardinality, not data size — this setting is the escape hatch for
+//! high-cardinality payloads and was previously only honored at checkpoint.
+static bool VariantShreddingEnabled(int64_t minimum_size, idx_t current_size) {
+	if (minimum_size == -1) {
+		//! Shredding is entirely disabled
+		return false;
+	}
+	return current_size >= static_cast<idx_t>(minimum_size);
+}
+
 unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit() {
+	auto &config = DBConfig::GetConfig(writer.GetContext());
+	if (Settings::Get<VariantMinimumShreddingSizeSetting>(config) == -1) {
+		//! Shredding disabled: skip analysis entirely; the variant is written
+		//! unshredded (metadata + value only)
+		return nullptr;
+	}
 	if (child_writers.size() == 2 && !is_analyzed) {
 		return make_uniq<VariantAnalyzeSchemaState>();
 	}
@@ -209,6 +231,16 @@ static bool ConstructShreddedType(const VariantAnalyzeData &state, LogicalType &
 
 void VariantColumnWriter::AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState &state_p) {
 	auto &state = state_p.Cast<VariantAnalyzeSchemaState>();
+	auto &config = DBConfig::GetConfig(writer.GetContext());
+	auto minimum_shredding_size = Settings::Get<VariantMinimumShreddingSizeSetting>(config);
+	if (!VariantShreddingEnabled(minimum_shredding_size, state.analyze_data.total_count)) {
+		//! Below the minimum row count for shredding (same semantics as the
+		//! storage checkpoint path) — keep the variant unshredded.
+		//! Mark as analyzed to prevent re-analysis from modifying child_writers
+		//! after InitializeSchemaElements has already locked in the schema
+		is_analyzed = true;
+		return;
+	}
 	LogicalType shredded_type;
 	if (!ConstructShreddedType(state.analyze_data, shredded_type)) {
 		//! Can't shred, keep the original children
