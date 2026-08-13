@@ -581,12 +581,12 @@ unique_ptr<ColumnReader> ParquetReader::CreateReaderRecursive(ClientContext &con
 			D_ASSERT(typed_value_schema.name == "typed_value");
 			auto variant_stats = GetVariantStats(schema);
 
-			if (variant_stats && IsFullyShredded(*variant_stats, indexes[0])) {
+			//! Fully-shredded typed_value early-return: NOT ported (main's struct-extract wiring
+			//! into typed_value needs the restructured scan setup). Gated off.
+			if (false && variant_stats && IsFullyShredded(*variant_stats, indexes[0])) {
 			//! This field is present in 'typed_value' across all rowgroups
 			//! So we can directly push a struct extract into 'typed_value' and ignore 'value'+'metadata'
 			auto typed_value_index = CreateVariantTypedValuePushdown(typed_value_schema, indexes[0]);
-			for (auto &ci2 : typed_value_index.GetChildIndexes()) {
-			}
 			return CreateReaderRecursive(context, typed_value_index.GetChildIndexes(), typed_value_schema);
 			}
 		}
