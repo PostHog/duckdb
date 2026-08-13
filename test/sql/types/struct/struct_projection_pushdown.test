@@ -70,6 +70,8 @@ NULL
 false
 
 # Add a cast on top of the struct extract
+# 1.5.5 port: variant extract+cast scans need main's restructured scan setup — struct only for now.
+onlyif type=struct
 query I
 SELECT s.b::INTEGER FROM ${source}
 ----

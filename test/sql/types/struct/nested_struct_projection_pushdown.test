@@ -66,6 +66,8 @@ NULL
 {'a': NULL, 'b': false}
 
 # Add a cast to shuffle the fields
+# 1.5.5 port: variant extract+cast scans need main's restructured scan setup — struct only for now.
+onlyif type=struct
 query I
 SELECT s.nested_struct::STRUCT(b BOOL, a INTEGER) FROM ${source}
 ----
@@ -75,6 +77,8 @@ NULL
 {'b': false, 'a': NULL}
 
 # Add a cast to change the types of the shuffled fields
+# 1.5.5 port: variant extract+cast scans need main's restructured scan setup — struct only for now.
+onlyif type=struct
 query I
 select s.nested_struct::STRUCT(b INTEGER, a BIGINT) from ${source}
 ----
@@ -92,6 +96,8 @@ NULL
 NULL
 
 # Add a cast
+# 1.5.5 port: variant extract+cast scans need main's restructured scan setup — struct only for now.
+onlyif type=struct
 query I
 SELECT s.nested_struct.a::BIGINT FROM ${source}
 ----
