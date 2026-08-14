@@ -10,7 +10,9 @@
 
 #include "struct_column_writer.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/variant.hpp"
+#include "duckdb/common/unordered_set.hpp"
 #include "duckdb/function/scalar/variant_utils.hpp"
 
 namespace duckdb {
@@ -56,6 +58,24 @@ public:
 	VariantAnalyzeData child;
 };
 
+struct VariantShredKeyFilter {
+	string prefix;
+	unordered_set<string> extra;
+
+	bool Active() const {
+		return !prefix.empty() || !extra.empty();
+	}
+	bool Keep(const string &key) const {
+		if (!Active()) {
+			return true;
+		}
+		if (!prefix.empty() && StringUtil::StartsWith(key, prefix)) {
+			return true;
+		}
+		return extra.find(key) != extra.end();
+	}
+};
+
 struct VariantAnalyzeSchemaState : public ParquetAnalyzeSchemaState {
 public:
 	VariantAnalyzeSchemaState() {
@@ -65,6 +85,7 @@ public:
 
 public:
 	VariantAnalyzeData analyze_data;
+	VariantShredKeyFilter filter;
 };
 
 class VariantColumnWriter : public StructColumnWriter {
@@ -77,7 +98,7 @@ public:
 
 public:
 	idx_t FinalizeSchema(vector<duckdb_parquet::SchemaElement> &schemas) override;
-	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit() override;
+	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit(idx_t row_count) override;
 	void AnalyzeSchema(ParquetAnalyzeSchemaState &state, Vector &input, idx_t count) override;
 	void AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState &state) override;
 

@@ -3,6 +3,9 @@
 
 require parquet
 
+statement ok
+SET variant_minimum_shredding_size = 0;
+
 foreach type utinyint usmallint uinteger ubigint uhugeint hugeint
 
 # Shred unsigned types when writing to Parquet

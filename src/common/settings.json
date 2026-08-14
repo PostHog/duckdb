@@ -1105,6 +1105,20 @@
         "default_value": "30000"
     },
     {
+        "name": "variant_shred_key_prefix",
+        "description": "Parquet writer only. Shred VARIANT object keys that start with this prefix (recursive). Empty (default) shreds every key. Unmatched keys stay in the untyped remainder. Native-storage checkpoint ignores this.",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": ""
+    },
+    {
+        "name": "variant_shred_keys",
+        "description": "Parquet writer only. Comma-separated extra VARIANT object keys to shred, unioned with variant_shred_key_prefix. Native-storage checkpoint ignores this.",
+        "type": "VARCHAR",
+        "scope": "global",
+        "default_value": ""
+    },
+    {
         "name": "wal_autocheckpoint_entries",
         "description": "Trigger automatic checkpoint when WAL entry count reaches or exceeds N (0 = disabled)",
         "type": "UBIGINT",

@@ -60,6 +60,8 @@ OptionValueSet GetValueForOption(const string &name, const LogicalType &type) {
 	    {"old_implicit_casting", {Value(true)}},
 	    {"prefer_range_joins", {Value(true)}},
 	    {"variant_minimum_shredding_size", {Value::INTEGER(-1)}},
+	    {"variant_shred_key_prefix", {"$"}},
+	    {"variant_shred_keys", {"utm_source,utm_medium"}},
 	    {"allow_persistent_secrets", {Value(false)}},
 	    {"secret_directory", {"/tmp/some/path"}},
 	    {"default_secret_storage", {"custom_storage"}},
