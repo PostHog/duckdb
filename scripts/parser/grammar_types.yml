@@ -102,6 +102,11 @@ SQLStatement:
     - UseStatement
     - VacuumStatement
     - PragmaAssignOrFunction
+    - ExternalResourceStatement
+    - CreateExternalResourceStmt
+    - RegisterExternalResourceStmt
+    - DestroyExternalResourceStmt
+    - ShowExternalResourcesStmt
 
 SelectStatement:
   type: "unique_ptr<SelectStatement>"
@@ -127,6 +132,7 @@ SetStatement:
   by_value: true
   rules:
     - SetAssignmentOrTimeZone
+    - SetSchema
     - SetTimeZone
     - StandardAssignment
 
@@ -706,6 +712,7 @@ GenericCopyOptionList:
   by_value: false
   rules:
     - AttachOptions
+    - ExternalResourceCreationOptions
     - GenericCopyOptionList
     - CopyOptions
     - CopyOptionList
@@ -1127,6 +1134,7 @@ Bool:
     - CheckpointForce
     - IfNotExists
     - OrReplace
+    - ShowAllModifier
     - FunctionTypeMacro
     - FunctionTypeMacroKeyword
     - FunctionTypeFunction
@@ -1154,6 +1162,7 @@ Int64:
   by_value: false
   rules:
     - ArrayBounds
+    - ArrayKeywordWithBounds
     - SquareBracketsArray
     - ArrayKeyword
 
