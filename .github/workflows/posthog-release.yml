@@ -1,0 +1,222 @@
+# PostHog fork artifacts. Official LinuxRelease/BundleStaticLibs deploy to
+# DuckDB Inc S3 and use unpinned actions; PostHog org policy rejects those.
+#
+# library_version is forced to vX.Y.Z (from the vX.Y.Z-posthog.N tag) so
+# INSTALL ducklake/httpfs/postgres/aws still resolve on the official
+# extension channel. Identify the build via source_id in pragma_version().
+#
+# Trigger: push of v*.*.*-posthog.* or workflow_dispatch.
+name: PostHog Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+-posthog.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create/update (e.g. v1.5.5-posthog.2). Empty = artifacts only."
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: posthog-release-${{ github.ref }}-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    outputs:
+      base_version: ${{ steps.v.outputs.base_version }}
+      override: ${{ steps.v.outputs.override }}
+      short_sha: ${{ steps.v.outputs.short_sha }}
+      release_tag: ${{ steps.v.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - id: v
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT=$(git rev-parse --short=10 HEAD)
+          REF="${{ inputs.tag || github.ref_name }}"
+          if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-posthog\.[0-9]+$ ]]; then
+            BASE="v${BASH_REMATCH[1]}"
+            TAG="$REF"
+          elif [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            BASE="$REF"
+            TAG=""
+          else
+            # Branch / SHA dispatch: keep the 1.5.5 extension channel.
+            BASE="v1.5.5"
+            TAG=""
+          fi
+          OVERRIDE="${BASE}-0-g${SHORT}"
+          echo "base_version=${BASE}" >> "$GITHUB_OUTPUT"
+          echo "override=${OVERRIDE}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "OVERRIDE_GIT_DESCRIBE=${OVERRIDE}  release_tag=${TAG}"
+
+  linux-binaries:
+    name: Linux ${{ matrix.arch }} CLI + libs
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            image: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            image: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Build in manylinux
+        shell: bash
+        env:
+          OVERRIDE_GIT_DESCRIBE: ${{ needs.version.outputs.override }}
+        run: |
+          set -euo pipefail
+          PWD_HOST=$(pwd)
+          docker run --rm \
+            -v "${PWD_HOST}:${PWD_HOST}" \
+            -e GEN=ninja \
+            -e OVERRIDE_GIT_DESCRIBE \
+            -e BUILD_EXTENSIONS="json;parquet" \
+            "quay.io/pypa/manylinux_2_28_${{ matrix.image }}" \
+            bash -c "
+              set -euo pipefail
+              dnf install -y ninja-build perl-IPC-Cmd
+              git config --global --add safe.directory ${PWD_HOST}
+              make -C ${PWD_HOST} release
+            "
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build/release/duckdb -c "SELECT library_version, source_id FROM pragma_version();"
+          zip -j "duckdb_cli-linux-${{ matrix.arch }}.zip" build/release/duckdb
+          zip -j "libduckdb-linux-${{ matrix.arch }}.zip" \
+            build/release/src/libduckdb.so \
+            src/include/duckdb.h
+          make gather-libs
+          zip -r -j "static-libs-linux-${{ matrix.arch }}.zip" src/include/duckdb.h build/release/libs/
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-${{ matrix.arch }}
+          path: |
+            duckdb_cli-linux-${{ matrix.arch }}.zip
+            libduckdb-linux-${{ matrix.arch }}.zip
+            static-libs-linux-${{ matrix.arch }}.zip
+
+  python-wheel:
+    name: Python wheel linux ${{ matrix.arch }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            image: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            image: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          path: duckdb
+
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: duckdb/duckdb-python
+          ref: ${{ needs.version.outputs.base_version }}
+          path: duckdb-python
+          fetch-depth: 1
+
+      - name: Vendor this fork into duckdb-python
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf duckdb-python/external/duckdb
+          mkdir -p duckdb-python/external
+          # Copy the engine tree the python package vendors as a submodule.
+          git -C duckdb checkout-index -a --prefix="$(pwd)/duckdb-python/external/duckdb/"
+
+      - name: Build cp312 manylinux wheel
+        shell: bash
+        env:
+          OVERRIDE_GIT_DESCRIBE: ${{ needs.version.outputs.override }}
+        run: |
+          set -euo pipefail
+          PWD_HOST=$(pwd)
+          docker run --rm \
+            -v "${PWD_HOST}:${PWD_HOST}" \
+            -e OVERRIDE_GIT_DESCRIBE \
+            "quay.io/pypa/manylinux_2_28_${{ matrix.image }}" \
+            bash -c "
+              set -euo pipefail
+              dnf install -y ninja-build perl-IPC-Cmd
+              PY=/opt/python/cp312-cp312/bin/python
+              cd ${PWD_HOST}/duckdb-python
+              \${PY} -m pip install -U pip build scikit-build-core pybind11 setuptools_scm ninja cmake
+              \${PY} -m build --wheel -o ${PWD_HOST}/wheels
+            "
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wheel-linux-${{ matrix.arch }}
+          path: wheels/*.whl
+
+  publish:
+    name: GitHub release
+    needs: [version, linux-binaries, python-wheel]
+    if: needs.version.outputs.release_tag != ''
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.version.outputs.release_tag }}
+          OVERRIDE: ${{ needs.version.outputs.override }}
+          SHA: ${{ needs.version.outputs.short_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -la dist
+          NOTES=$(cat <<EOF
+          PostHog patched DuckDB engine ${TAG}.
+
+          \`library_version\` reports \`${{ needs.version.outputs.base_version }}\` (official extension channel).
+          Identify this build via \`source_id = ${SHA}\` in \`pragma_version()\`.
+          Built with \`OVERRIDE_GIT_DESCRIBE=${OVERRIDE}\`.
+
+          Assets: linux CLI, libduckdb, static-libs (duckgres / duckdb-go-bindings), cp312 manylinux wheels (millpond / viaduck).
+          EOF
+          )
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --notes "$NOTES"
+          fi
