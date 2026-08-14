@@ -1,0 +1,53 @@
+# name: test/sql/types/variant/variant_shred_key_prefix.test
+# description: Parquet writer shreds only allowlisted VARIANT object keys; unmatched keys stay queryable
+# group: [variant]
+
+require parquet
+
+require json
+
+statement ok
+SET variant_minimum_shredding_size=0;
+
+statement ok
+CREATE TABLE src AS SELECT try_cast(try_cast('{"$browser": "Chrome", "width": 1920, "$set": {"email": "a@b.c", "$geoip": "US"}}' AS JSON) AS VARIANT) v;
+
+# prefix=$: $browser and $set are shredded; width is not; $set.email is not
+statement ok
+SET variant_shred_key_prefix='$';
+
+statement ok
+COPY src TO '{TEST_DIR}/variant_prefix.parquet' (FORMAT PARQUET);
+
+query I
+SELECT count(*) FROM parquet_schema('{TEST_DIR}/variant_prefix.parquet') WHERE name='width';
+----
+0
+
+query I
+SELECT count(*) > 0 FROM parquet_schema('{TEST_DIR}/variant_prefix.parquet') WHERE name='$browser';
+----
+true
+
+# unmatched keys are still in the VARIANT
+query III
+SELECT v."$browser", v.width, v."$set".email FROM read_parquet('{TEST_DIR}/variant_prefix.parquet');
+----
+Chrome	1920	a@b.c
+
+# extra keys union with the prefix
+statement ok
+SET variant_shred_keys='width';
+
+statement ok
+COPY src TO '{TEST_DIR}/variant_union.parquet' (FORMAT PARQUET);
+
+query I
+SELECT count(*) > 0 FROM parquet_schema('{TEST_DIR}/variant_union.parquet') WHERE name='width';
+----
+true
+
+query II
+SELECT v.width, v."$set".email FROM read_parquet('{TEST_DIR}/variant_union.parquet');
+----
+1920	a@b.c

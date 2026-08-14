@@ -572,11 +572,15 @@ VariantDecimalProperties ParquetVariantNode::GetDecimalProperties() const {
 	auto value_data = payload + sizeof(uint8_t);
 	switch (value_metadata.primitive_type) {
 	case VariantPrimitiveType::DECIMAL4:
-		return VariantDecimalProperties(ComputeDecimalWidth<int32_t>(LoadChecked<int32_t>(value_data, binary_end)),
-		                                scale);
+		return VariantDecimalProperties(
+		    std::max(ComputeDecimalWidth<int32_t>(LoadChecked<int32_t>(value_data, binary_end)),
+		             static_cast<uint32_t>(scale)),
+		    scale);
 	case VariantPrimitiveType::DECIMAL8:
-		return VariantDecimalProperties(ComputeDecimalWidth<int64_t>(LoadChecked<int64_t>(value_data, binary_end)),
-		                                scale);
+		return VariantDecimalProperties(
+		    std::max(ComputeDecimalWidth<int64_t>(LoadChecked<int64_t>(value_data, binary_end)),
+		             static_cast<uint32_t>(scale)),
+		    scale);
 	default:
 		D_ASSERT(value_metadata.primitive_type == VariantPrimitiveType::DECIMAL16);
 		return VariantDecimalProperties(DecimalWidth<hugeint_t>::max, scale);
@@ -707,17 +711,21 @@ struct VariantExtractPathState {
 	vector<bool> resolved;
 	//! The metadata blob the resolution is valid for (keyed by content - the decoded metadata object can be
 	//! freed and its address reused when the dictionary changes)
-	string_t resolved_blob;
+	bool has_resolved = false;
+	string_t resolved_blob = string_t(static_cast<uint32_t>(0));
 
 	void Resolve(const VariantMetadata &metadata, const string_t &blob) {
-		if (resolved_blob.GetData() == blob.GetData() && resolved_blob.GetSize() == blob.GetSize()) {
-			return;
+		if (has_resolved) {
+			if (resolved_blob.GetData() == blob.GetData() && resolved_blob.GetSize() == blob.GetSize()) {
+				return;
+			}
+			if (resolved_blob.GetSize() == blob.GetSize() &&
+			    memcmp(resolved_blob.GetData(), blob.GetData(), blob.GetSize()) == 0) {
+				resolved_blob = blob;
+				return;
+			}
 		}
-		if (resolved_blob.GetData() && resolved_blob.GetSize() == blob.GetSize() &&
-		    memcmp(resolved_blob.GetData(), blob.GetData(), blob.GetSize()) == 0) {
-			resolved_blob = blob;
-			return;
-		}
+		has_resolved = true;
 		resolved_blob = blob;
 		//! The 'sorted_strings' flag is not reliable across writers (DuckDB itself used to set it without
 		//! always sorting) - verify instead of trusting it

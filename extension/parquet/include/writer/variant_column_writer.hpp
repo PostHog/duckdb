@@ -58,6 +58,24 @@ public:
 	VariantAnalyzeData child;
 };
 
+struct VariantShredKeyFilter {
+	string prefix;
+	unordered_set<string> extra;
+
+	bool Active() const {
+		return !prefix.empty() || !extra.empty();
+	}
+	bool Keep(const string &key) const {
+		if (!Active()) {
+			return true;
+		}
+		if (!prefix.empty() && StringUtil::StartsWith(key, prefix)) {
+			return true;
+		}
+		return extra.find(key) != extra.end();
+	}
+};
+
 struct VariantAnalyzeSchemaState : public ParquetAnalyzeSchemaState {
 public:
 	VariantAnalyzeSchemaState() {
@@ -67,6 +85,7 @@ public:
 
 public:
 	VariantAnalyzeData analyze_data;
+	VariantShredKeyFilter filter;
 };
 
 class VariantColumnWriter : public StructColumnWriter {

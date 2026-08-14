@@ -14,16 +14,16 @@ statement ok
 SET variant_minimum_shredding_size=-1;
 
 statement ok
-COPY src TO '__TEST_DIR__/variant_noshred.parquet' (FORMAT PARQUET);
+COPY src TO '{TEST_DIR}/variant_noshred.parquet' (FORMAT PARQUET);
 
 query I
-SELECT count(*) FROM parquet_schema('__TEST_DIR__/variant_noshred.parquet') WHERE name='typed_value';
+SELECT count(*) FROM parquet_schema('{TEST_DIR}/variant_noshred.parquet') WHERE name='typed_value';
 ----
 0
 
 # unshredded files stay readable, including field extraction
 query II
-SELECT count(*), max(v.a::INT) FROM read_parquet('__TEST_DIR__/variant_noshred.parquet');
+SELECT count(*), max(v.a::INT) FROM read_parquet('{TEST_DIR}/variant_noshred.parquet');
 ----
 20	19
 
@@ -32,10 +32,10 @@ statement ok
 SET variant_minimum_shredding_size=100;
 
 statement ok
-COPY src TO '__TEST_DIR__/variant_below.parquet' (FORMAT PARQUET);
+COPY src TO '{TEST_DIR}/variant_below.parquet' (FORMAT PARQUET);
 
 query I
-SELECT count(*) FROM parquet_schema('__TEST_DIR__/variant_below.parquet') WHERE name='typed_value';
+SELECT count(*) FROM parquet_schema('{TEST_DIR}/variant_below.parquet') WHERE name='typed_value';
 ----
 0
 
@@ -44,15 +44,15 @@ statement ok
 SET variant_minimum_shredding_size=10;
 
 statement ok
-COPY src TO '__TEST_DIR__/variant_shred.parquet' (FORMAT PARQUET);
+COPY src TO '{TEST_DIR}/variant_shred.parquet' (FORMAT PARQUET);
 
 query I
-SELECT count(*) > 0 FROM parquet_schema('__TEST_DIR__/variant_shred.parquet') WHERE name='typed_value';
+SELECT count(*) > 0 FROM parquet_schema('{TEST_DIR}/variant_shred.parquet') WHERE name='typed_value';
 ----
 true
 
 # shredded files read back identically
 query II
-SELECT count(*), max(v.a::INT) FROM read_parquet('__TEST_DIR__/variant_shred.parquet');
+SELECT count(*), max(v.a::INT) FROM read_parquet('{TEST_DIR}/variant_shred.parquet');
 ----
 20	19

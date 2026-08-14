@@ -2029,6 +2029,30 @@ struct VariantMinimumShreddingSizeSetting {
 	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
 };
 
+struct VariantShredKeyPrefixSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "variant_shred_key_prefix";
+	static constexpr const char *Description =
+	    "Only shred VARIANT object keys that start with this prefix (recursive). Empty (default) shreds every key. "
+	    "Unmatched keys stay in the untyped VARIANT remainder and remain queryable.";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
+struct VariantShredKeysSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "variant_shred_keys";
+	static constexpr const char *Description =
+	    "Comma-separated extra VARIANT object keys to shred, unioned with variant_shred_key_prefix. Empty (default) "
+	    "adds no extra keys.";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct WalAutocheckpointEntriesSetting {
 	using RETURN_TYPE = idx_t;
 	static constexpr const char *Name = "wal_autocheckpoint_entries";

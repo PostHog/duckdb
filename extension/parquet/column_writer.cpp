@@ -348,9 +348,9 @@ unique_ptr<ColumnWriter> ColumnWriter::CreateWriterRecursive(ClientContext &cont
 				is_optional = true;
 			}
 
-		child_writers.push_back(CreateWriterRecursive(context, writer, path_in_schema, child_type, child_name,
-		                                              allow_geometry, child_field_ids, child_shredding, max_repeat,
-		                                              max_define + 1, is_optional));
+			child_writers.push_back(CreateWriterRecursive(context, writer, path_in_schema, child_type, child_name,
+			                                              allow_geometry, child_field_ids, child_shredding, max_repeat,
+			                                              max_define + 1, is_optional));
 		}
 		auto result = make_uniq<VariantColumnWriter>(writer, std::move(variant_column), path_in_schema,
 		                                             std::move(child_writers));
