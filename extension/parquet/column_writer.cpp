@@ -328,7 +328,9 @@ unique_ptr<ColumnWriter> ColumnWriter::CreateWriterRecursive(ClientContext &cont
 			//! Explicitly requested unshredded layout, don't let the analyzer add a 'typed_value'
 			result->SetExplicitShredding();
 		}
-		return result;
+		// GCC 12 / C++11 will not implicitly convert unique_ptr<VariantColumnWriter>
+		// to unique_ptr<ColumnWriter> from a named local (GCC 14 did).
+		return unique_ptr<ColumnWriter>(std::move(result));
 	}
 
 	if (type.id() == LogicalTypeId::STRUCT || type.id() == LogicalTypeId::UNION) {
