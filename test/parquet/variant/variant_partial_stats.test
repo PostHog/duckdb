@@ -6,6 +6,9 @@
 
 require parquet
 
+statement ok
+SET variant_minimum_shredding_size = 0;
+
 # A heterogeneous list of objects: auto-shredding produces a deeply-nested overlay column whose parquet
 # statistics cannot be converted (a value column with data but no min/max, across row groups). Before the
 # fix this discarded the statistics of the *entire* variant column (shredding_state = INCONSISTENT). Now

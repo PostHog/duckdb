@@ -58,6 +58,24 @@ public:
 	VariantAnalyzeData child;
 };
 
+struct VariantShredKeyFilter {
+	string prefix;
+	unordered_set<string> extra;
+
+	bool Active() const {
+		return !prefix.empty() || !extra.empty();
+	}
+	bool Keep(const string &key) const {
+		if (!Active()) {
+			return true;
+		}
+		if (!prefix.empty() && StringUtil::StartsWith(key, prefix)) {
+			return true;
+		}
+		return extra.find(key) != extra.end();
+	}
+};
+
 struct VariantAnalyzeSchemaState : public ParquetAnalyzeSchemaState {
 public:
 	VariantAnalyzeSchemaState() {
@@ -67,6 +85,7 @@ public:
 
 public:
 	VariantAnalyzeData analyze_data;
+	VariantShredKeyFilter filter;
 };
 
 class VariantColumnWriter : public StructColumnWriter {
@@ -79,7 +98,7 @@ public:
 
 public:
 	idx_t FinalizeSchema(vector<duckdb_parquet::SchemaElement> &schemas) override;
-	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit() override;
+	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit(idx_t row_count) override;
 	void AnalyzeSchema(ParquetAnalyzeSchemaState &state, Vector &input, idx_t count) override;
 	void AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState &state) override;
 	bool TryExportPreparedShreddingType(ShreddingType &result) const override;
@@ -109,6 +128,11 @@ public:
 public:
 	static ScalarFunction GetTransformFunction();
 	static LogicalType TransformTypedValueRecursive(const LogicalType &type);
+
+	//! Mark the shredding as explicitly provided, the analyzer must not override it
+	void SetExplicitShredding() {
+		is_analyzed = true;
+	}
 
 private:
 	//! Whether the schema of the variant has been analyzed already

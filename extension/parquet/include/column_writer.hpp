@@ -155,7 +155,7 @@ public:
 		throw NotImplementedException("Writer does not have a transform expression");
 	}
 
-	virtual unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit() {
+	virtual unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit(idx_t row_count) {
 		return nullptr;
 	}
 

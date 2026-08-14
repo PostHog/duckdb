@@ -185,13 +185,14 @@ idx_t VariantColumnReader::Read(ColumnReaderInput &input, Vector &result) {
 		}
 	}
 	// convert the actual columns
-	Convert(metadata_intermediate, intermediate_group, result, num_values);
 	if (index.IsPushdownExtract()) {
 		D_ASSERT(!extract_path.empty());
-		Vector extract_result(LogicalType::VARIANT(), num_values);
-		VariantUtils::VariantExtract(result, extract_path, extract_result, num_values);
-		result.Reference(extract_result);
+		//! Targeted extract: navigate only the requested path per row, emitting just the addressed value
+		ParquetVariantIterator iterator(metadata_intermediate, intermediate_group);
+		VariantExtractTargeted(iterator, extract_path, result, num_values);
+		return value_values;
 	}
+	Convert(metadata_intermediate, intermediate_group, result, num_values);
 
 	return value_values;
 }
