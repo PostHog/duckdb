@@ -102,6 +102,8 @@ jobs:
               git config --global --add safe.directory ${PWD_HOST}
               make -C ${PWD_HOST} release
             "
+          # manylinux writes as root; later host-side zip/chown need these files.
+          sudo chown -R "$(id -u):$(id -g)" build
 
       - name: Package
         shell: bash
@@ -112,7 +114,14 @@ jobs:
           zip -j "libduckdb-linux-${{ matrix.arch }}.zip" \
             build/release/src/libduckdb.so \
             src/include/duckdb.h
-          make gather-libs
+          # Inline gather-libs: `make gather-libs` depends on `release` and
+          # would re-run host cmake against the docker-built tree.
+          rm -rf build/release/libs
+          mkdir -p build/release/libs
+          cp build/release/src/libduckdb_static.a build/release/libs/
+          cp build/release/third_party/*/libduckdb_*.a build/release/libs/
+          cp build/release/extension/libduckdb_generated_extension_loader.a build/release/libs/
+          cp build/release/extension/*/lib*_extension.a build/release/libs/
           zip -r -j "static-libs-linux-${{ matrix.arch }}.zip" src/include/duckdb.h build/release/libs/
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -162,13 +171,16 @@ jobs:
       - name: Build cp312 manylinux wheel
         shell: bash
         env:
-          OVERRIDE_GIT_DESCRIBE: ${{ needs.version.outputs.override }}
+          # 1.5.5 CMake accepts vX.Y.Z-N-gHASH. duckdb-python's build backend
+          # rewrites env OVERRIDE_GIT_DESCRIBE to PEP 440 (v1.5.5+gHASH) and
+          # then CMake fatal-errors. Pass the 1.5.5 form via CMAKE_ARGS only.
+          CMAKE_ARGS: -DOVERRIDE_GIT_DESCRIBE=${{ needs.version.outputs.override }}
         run: |
           set -euo pipefail
           PWD_HOST=$(pwd)
           docker run --rm \
             -v "${PWD_HOST}:${PWD_HOST}" \
-            -e OVERRIDE_GIT_DESCRIBE \
+            -e CMAKE_ARGS \
             "quay.io/pypa/manylinux_2_28_${{ matrix.image }}" \
             bash -c "
               set -euo pipefail
