@@ -94,7 +94,9 @@ jobs:
             -v "${PWD_HOST}:${PWD_HOST}" \
             -e GEN=ninja \
             -e OVERRIDE_GIT_DESCRIBE \
-            -e BUILD_EXTENSIONS="json;parquet" \
+            -e EXTENSION_CONFIGS="${PWD_HOST}/.github/config/bundled_extensions.cmake" \
+            -e ENABLE_EXTENSION_AUTOLOADING=1 \
+            -e ENABLE_EXTENSION_AUTOINSTALL=1 \
             "quay.io/pypa/manylinux_2_28_${{ matrix.image }}" \
             bash -c "
               set -euo pipefail
