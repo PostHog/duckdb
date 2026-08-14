@@ -1,5 +1,5 @@
 # name: test/sql/types/variant/variant_parquet_shredding_setting.test
-# description: The parquet writer honors variant_minimum_shredding_size (previously checkpoint-only)
+# description: The parquet writer honors variant_minimum_shredding_size
 # group: [variant]
 
 require parquet

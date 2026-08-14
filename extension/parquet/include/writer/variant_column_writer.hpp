@@ -98,7 +98,7 @@ public:
 
 public:
 	idx_t FinalizeSchema(vector<duckdb_parquet::SchemaElement> &schemas) override;
-	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit() override;
+	unique_ptr<ParquetAnalyzeSchemaState> AnalyzeSchemaInit(idx_t row_count) override;
 	void AnalyzeSchema(ParquetAnalyzeSchemaState &state, Vector &input, idx_t count) override;
 	void AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState &state) override;
 	bool TryExportPreparedShreddingType(ShreddingType &result) const override;

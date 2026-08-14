@@ -573,7 +573,7 @@ void ParquetWriter::AnalyzeSchema(ColumnDataCollection &buffer, vector<unique_pt
 	vector<column_t> column_ids;
 	for (idx_t i = 0; i < column_writers.size(); i++) {
 		auto &writer = column_writers[i];
-		auto state = writer->AnalyzeSchemaInit();
+		auto state = writer->AnalyzeSchemaInit(buffer.Count());
 		if (state) {
 			needs_analyze = true;
 			states.push_back(std::move(state));

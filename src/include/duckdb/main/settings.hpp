@@ -2033,8 +2033,8 @@ struct VariantShredKeyPrefixSetting {
 	using RETURN_TYPE = string;
 	static constexpr const char *Name = "variant_shred_key_prefix";
 	static constexpr const char *Description =
-	    "Only shred VARIANT object keys that start with this prefix (recursive). Empty (default) shreds every key. "
-	    "Unmatched keys stay in the untyped VARIANT remainder and remain queryable.";
+	    "Parquet writer only. Shred VARIANT object keys that start with this prefix (recursive). Empty (default) "
+	    "shreds every key. Unmatched keys stay in the untyped remainder. Native-storage checkpoint ignores this.";
 	static constexpr const char *InputType = "VARCHAR";
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
@@ -2045,8 +2045,8 @@ struct VariantShredKeysSetting {
 	using RETURN_TYPE = string;
 	static constexpr const char *Name = "variant_shred_keys";
 	static constexpr const char *Description =
-	    "Comma-separated extra VARIANT object keys to shred, unioned with variant_shred_key_prefix. Empty (default) "
-	    "adds no extra keys.";
+	    "Parquet writer only. Comma-separated extra VARIANT object keys to shred, unioned with "
+	    "variant_shred_key_prefix. Native-storage checkpoint ignores this.";
 	static constexpr const char *InputType = "VARCHAR";
 	static constexpr const char *DefaultValue = "";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;

@@ -40,25 +40,19 @@ static VariantShredKeyFilter MakeShredKeyFilter(ClientContext &context) {
 	return filter;
 }
 
-//! Mirrors EnableShredding in storage/table/variant_column_data.cpp: -1 disables
-//! shredding entirely, otherwise shred only when the analyzed row count reaches
-//! the minimum. Auto-shredding unions every distinct object key across the row
-//! group into a typed_value STRUCT field, so its memory footprint scales with
-//! key cardinality, not data size — this setting is the escape hatch for
-//! high-cardinality payloads and was previously only honored at checkpoint.
+//! Keep in lockstep with EnableShredding (variant_column_data.cpp): -1 disables;
+//! otherwise shred iff current_size >= minimum.
 static bool VariantShreddingEnabled(int64_t minimum_size, idx_t current_size) {
 	if (minimum_size == -1) {
-		//! Shredding is entirely disabled
 		return false;
 	}
 	return current_size >= static_cast<idx_t>(minimum_size);
 }
 
-unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit() {
+unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit(idx_t row_count) {
 	auto &config = DBConfig::GetConfig(writer.GetContext());
-	if (Settings::Get<VariantMinimumShreddingSizeSetting>(config) == -1) {
-		//! Shredding disabled: skip analysis entirely; the variant is written
-		//! unshredded (metadata + value only)
+	auto minimum = Settings::Get<VariantMinimumShreddingSizeSetting>(config);
+	if (!VariantShreddingEnabled(minimum, row_count)) {
 		is_analyzed = true;
 		return nullptr;
 	}
@@ -67,7 +61,7 @@ unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit() {
 		state->filter = MakeShredKeyFilter(writer.GetContext());
 		return std::move(state);
 	}
-	//! Variant is already shredded explicitly, no need to analyze
+	//! Explicit SHREDDING already locked the layout
 	return nullptr;
 }
 
@@ -96,9 +90,7 @@ static void AnalyzeSchemaInternal(VariantAnalyzeData &state, UnifiedVariantVecto
 			auto &key = variant.GetKey(row, child_key_index);
 			auto key_str = key.GetString();
 			if (!filter.Keep(key_str)) {
-				//! Leave this field in the untyped remainder. It is still in
-				//! the VARIANT and still queryable; we just do not allocate a
-				//! shredded typed_value column for it.
+				//! Unmatched keys stay in the untyped remainder (still queryable).
 				continue;
 			}
 			auto &child_state = object_data.fields[key_str];
@@ -260,10 +252,8 @@ void VariantColumnWriter::AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState 
 	auto &config = DBConfig::GetConfig(writer.GetContext());
 	auto minimum_shredding_size = Settings::Get<VariantMinimumShreddingSizeSetting>(config);
 	if (!VariantShreddingEnabled(minimum_shredding_size, state.analyze_data.total_count)) {
-		//! Below the minimum row count for shredding (same semantics as the
-		//! storage checkpoint path) — keep the variant unshredded.
-		//! Mark as analyzed to prevent re-analysis from modifying child_writers
-		//! after InitializeSchemaElements has already locked in the schema
+		//! Backstop if Init ran but the analyzed count is below the minimum.
+		//! is_analyzed locks child_writers after InitializeSchemaElements.
 		is_analyzed = true;
 		return;
 	}
