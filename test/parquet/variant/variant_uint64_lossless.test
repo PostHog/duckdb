@@ -1,0 +1,175 @@
+# name: test/parquet/variant/variant_uint64_lossless.test
+# description: Preserve the full UINT64 range in Parquet VARIANT using exact decimal16 values.
+# group: [variant]
+
+require parquet
+
+require json
+
+# Keep the unshredded path explicit, independent of automatic shredding defaults.
+statement ok
+SET variant_minimum_shredding_size = 1000000;
+
+statement ok
+CREATE TABLE unsigned_values AS
+SELECT n::UBIGINT AS n, n::UBIGINT::VARIANT AS v FROM (VALUES
+    ('0'), ('9223372036854775807'), ('9223372036854775808'), ('18446744073709551615')
+) t(n);
+
+# Small UINT64 values retain INT64 (header 0x18, 8 bytes).
+# Large values use decimal16 (header 0x28, scale zero, positive 128-bit integer).
+query IT
+SELECT n, hex((variant_to_parquet_variant(v)::STRUCT(metadata BLOB, value BLOB)).value) FROM unsigned_values ORDER BY n;
+----
+0	180000000000000000
+9223372036854775807	18FFFFFFFFFFFFFF7F
+9223372036854775808	280000000000000000800000000000000000
+18446744073709551615	2800FFFFFFFFFFFFFFFF0000000000000000
+
+statement ok
+COPY unsigned_values TO '{TEST_DIR}/uint64_scalar.parquet' (FORMAT PARQUET);
+
+query III
+SELECT count(*), bool_and(v::UBIGINT = n), bool_and(v::JSON::VARCHAR = n::VARCHAR)
+FROM '{TEST_DIR}/uint64_scalar.parquet';
+----
+4	true	true
+
+query I
+SELECT count(*) FROM parquet_schema('{TEST_DIR}/uint64_scalar.parquet') WHERE name = 'typed_value';
+----
+0
+
+# Signed numbers retain their existing encoding, including the negative boundary.
+query IT
+SELECT n, hex((variant_to_parquet_variant(n::VARIANT)::STRUCT(metadata BLOB, value BLOB)).value)
+FROM (VALUES ('-9223372036854775808'::BIGINT), (-1::BIGINT), (0::BIGINT), (9223372036854775807::BIGINT)) t(n)
+ORDER BY n;
+----
+-9223372036854775808	180000000000000080
+-1	18FFFFFFFFFFFFFFFF
+0	180000000000000000
+9223372036854775807	18FFFFFFFFFFFFFF7F
+
+statement ok
+CREATE TABLE documents AS
+SELECT id, j::JSON AS expected, j::JSON::VARIANT AS v FROM (VALUES
+    (0, '{"x":0,"$browser":"Chrome"}'),
+    (1, '{"x":9223372036854775807,"$browser":"Chrome"}'),
+    (2, '{"x":9223372036854775808,"$browser":"Chrome"}'),
+    (3, '{"x":18446744073709551615,"$browser":"Firefox"}'),
+    (4, '{"x":18446744073709551615}'),
+    (5, '{"x":9223372036854775808,"$browser":null}'),
+    (6, '{"x":-9223372036854775808,"$browser":"Chrome"}'),
+    (7, '{"x":-1,"$browser":"Chrome","nested":{"a":[0,9223372036854775807,9223372036854775808,18446744073709551615,-1,null,{"x":18446744073709551615}]}}'),
+    (8, '[0,9223372036854775807,9223372036854775808,18446744073709551615,-9223372036854775808,{"x":18446744073709551615},null]'),
+    (9, 'null'),
+    (10, '{}'),
+    (11, '[]'),
+    (12, NULL)
+) t(id, j);
+
+statement ok
+COPY (SELECT id, v FROM documents) TO '{TEST_DIR}/uint64_unshredded.parquet' (FORMAT PARQUET);
+
+# This is the original failing JSON-to-VARIANT COPY path, with an explicit browser projection.
+statement ok
+COPY (SELECT id, v FROM documents) TO '{TEST_DIR}/uint64_shredded.parquet'
+(FORMAT PARQUET, SHREDDING {v: 'STRUCT("$browser" VARCHAR)'});
+
+foreach mode unshredded shredded
+
+# JSON object key order may change on disk. Compare parsed JSON, preserving numeric digits.
+# The id join and row count catch loss/duplication without relying on VARIANT comparisons.
+# Exact numeric digits and ordered array contents are checked separately below.
+query II
+SELECT count(*), bool_and(json_contains(p.v::JSON, d.expected) AND json_contains(d.expected, p.v::JSON))
+FROM '{TEST_DIR}/uint64_{mode}.parquet' p JOIN documents d USING (id);
+----
+13	true
+
+query IT
+SELECT id, json_extract(v::JSON, '$.x') FROM '{TEST_DIR}/uint64_{mode}.parquet' WHERE id < 8 ORDER BY id;
+----
+0	0
+1	9223372036854775807
+2	9223372036854775808
+3	18446744073709551615
+4	18446744073709551615
+5	9223372036854775808
+6	-9223372036854775808
+7	-1
+
+query IT
+SELECT id, json_extract(v::JSON, '$."$browser"') FROM '{TEST_DIR}/uint64_{mode}.parquet' WHERE id BETWEEN 3 AND 5 ORDER BY id;
+----
+3	"Firefox"
+4	NULL
+5	null
+
+query T
+SELECT json_extract(v::JSON, '$.nested.a') FROM '{TEST_DIR}/uint64_{mode}.parquet' WHERE id = 7;
+----
+[0,9223372036854775807,9223372036854775808,18446744073709551615,-1,null,{"x":18446744073709551615}]
+
+query T
+SELECT v::JSON FROM '{TEST_DIR}/uint64_{mode}.parquet' WHERE id = 8;
+----
+[0,9223372036854775807,9223372036854775808,18446744073709551615,-9223372036854775808,{"x":18446744073709551615},null]
+
+query II
+SELECT count(*) FILTER (WHERE v IS NULL), count(*) FILTER (WHERE v::JSON::VARCHAR = 'null')
+FROM '{TEST_DIR}/uint64_{mode}.parquet';
+----
+2	2
+
+endloop
+
+query TTT
+SELECT name, type, repetition_type FROM parquet_schema('{TEST_DIR}/uint64_shredded.parquet')
+WHERE name IN ('metadata', 'value', 'typed_value', '$browser');
+----
+metadata	BYTE_ARRAY	REQUIRED
+value	BYTE_ARRAY	OPTIONAL
+typed_value	NULL	OPTIONAL
+$browser	NULL	OPTIONAL
+value	BYTE_ARRAY	OPTIONAL
+typed_value	BYTE_ARRAY	OPTIONAL
+
+# Explicit nested shredding exercises separate value-index and row selections.
+statement ok
+COPY (SELECT id, v FROM documents) TO '{TEST_DIR}/uint64_nested_shredded.parquet'
+(FORMAT PARQUET, SHREDDING {v: 'STRUCT("$browser" VARCHAR, nested STRUCT(a VARIANT[]))'});
+
+query II
+SELECT count(*), bool_and(json_contains(p.v::JSON, d.expected) AND json_contains(d.expected, p.v::JSON))
+FROM '{TEST_DIR}/uint64_nested_shredded.parquet' p JOIN documents d USING (id);
+----
+13	true
+
+# Cross vector boundaries, the 255-element array boundary, and one-byte offsets.
+statement ok
+CREATE TABLE large_documents AS
+SELECT i, struct_pack("$browser" := 'Chrome', a := list_transform(range(300), x ->
+    struct_pack(x := (18446744073709551615::UBIGINT - (i + x)::UBIGINT))))::VARIANT AS v
+FROM range(2050) t(i);
+
+statement ok
+COPY large_documents TO '{TEST_DIR}/uint64_large.parquet'
+(FORMAT PARQUET, SHREDDING {v: 'STRUCT("$browser" VARCHAR)'});
+
+query II
+SELECT count(*), bool_and(p.v::JSON = d.v::JSON)
+FROM '{TEST_DIR}/uint64_large.parquet' p JOIN large_documents d USING (i);
+----
+2050	true
+
+# This change does not broaden the supported INT128/UINT128 ranges.
+foreach type HUGEINT UHUGEINT
+
+statement error
+SELECT variant_to_parquet_variant(18446744073709551615::{type}::VARIANT);
+----
+out of range for the destination type INT64
+
+endloop

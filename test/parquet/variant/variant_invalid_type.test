@@ -23,8 +23,8 @@ FROM '__TEST_DIR__/invalid_parquet_variant.parquet'
 
 endloop
 
-# these values are converted to INT64 - if the values are too big this conversion fails
-foreach unsupported_type ubigint uhugeint hugeint
+# UINT64 can use decimal16, but INT128/UINT128 still require values to fit in INT64.
+foreach unsupported_type uhugeint hugeint
 
 statement error
 copy (select '18446744073709551615'::${unsupported_type}::VARIANT) to '__TEST_DIR__/out_of_range_variant.parquet';

@@ -1,19 +1,52 @@
 #include "writer/variant_column_writer.hpp"
 #include "parquet_writer.hpp"
 #include "duckdb/common/types/decimal.hpp"
+#include "duckdb/main/config.hpp"
+#include "duckdb/main/settings.hpp"
 
 namespace duckdb {
 
-unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit() {
-	if (child_writers.size() == 2 && !is_analyzed) {
-		return make_uniq<VariantAnalyzeSchemaState>();
+static VariantShredKeyFilter MakeShredKeyFilter(ClientContext &context) {
+	auto &config = DBConfig::GetConfig(context);
+	VariantShredKeyFilter filter;
+	filter.prefix = Settings::Get<VariantShredKeyPrefixSetting>(config);
+	auto extra = Settings::Get<VariantShredKeysSetting>(config);
+	for (auto &token : StringUtil::Split(extra, ',')) {
+		StringUtil::Trim(token);
+		if (!token.empty()) {
+			filter.extra.insert(std::move(token));
+		}
 	}
-	//! Variant is already shredded explicitly, no need to analyze
+	return filter;
+}
+
+//! Keep in lockstep with EnableShredding (variant_column_data.cpp): -1 disables;
+//! otherwise shred iff current_size >= minimum.
+static bool VariantShreddingEnabled(int64_t minimum_size, idx_t current_size) {
+	if (minimum_size == -1) {
+		return false;
+	}
+	return current_size >= static_cast<idx_t>(minimum_size);
+}
+
+unique_ptr<ParquetAnalyzeSchemaState> VariantColumnWriter::AnalyzeSchemaInit(idx_t row_count) {
+	auto &config = DBConfig::GetConfig(writer.GetContext());
+	auto minimum = Settings::Get<VariantMinimumShreddingSizeSetting>(config);
+	if (!VariantShreddingEnabled(minimum, row_count)) {
+		is_analyzed = true;
+		return nullptr;
+	}
+	if (child_writers.size() == 2 && !is_analyzed) {
+		auto state = make_uniq<VariantAnalyzeSchemaState>();
+		state->filter = MakeShredKeyFilter(writer.GetContext());
+		return std::move(state);
+	}
+	//! Explicit SHREDDING already locked the layout
 	return nullptr;
 }
 
 static void AnalyzeSchemaInternal(VariantAnalyzeData &state, UnifiedVariantVectorData &variant, idx_t row,
-                                  uint32_t values_index) {
+                                  uint32_t values_index, const VariantShredKeyFilter &filter) {
 	state.total_count++;
 	if (!variant.RowIsValid(row)) {
 		state.type_map[static_cast<uint8_t>(VariantLogicalType::VARIANT_NULL)]++;
@@ -35,8 +68,13 @@ static void AnalyzeSchemaInternal(VariantAnalyzeData &state, UnifiedVariantVecto
 			auto child_key_index = variant.GetKeysIndex(row, i + nested_data.children_idx);
 
 			auto &key = variant.GetKey(row, child_key_index);
-			auto &child_state = object_data.fields[key.GetString()];
-			AnalyzeSchemaInternal(child_state, variant, row, child_values_index);
+			auto key_str = key.GetString();
+			if (!filter.Keep(key_str)) {
+				//! Unmatched keys stay in the untyped remainder (still queryable).
+				continue;
+			}
+			auto &child_state = object_data.fields[key_str];
+			AnalyzeSchemaInternal(child_state, variant, row, child_values_index, filter);
 		}
 	} else if (type_id == VariantLogicalType::ARRAY) {
 		if (!state.array_data) {
@@ -47,7 +85,7 @@ static void AnalyzeSchemaInternal(VariantAnalyzeData &state, UnifiedVariantVecto
 		for (idx_t i = 0; i < nested_data.child_count; i++) {
 			auto child_values_index = variant.GetValuesIndex(row, i + nested_data.children_idx);
 			auto &child_state = array_data.child;
-			AnalyzeSchemaInternal(child_state, variant, row, child_values_index);
+			AnalyzeSchemaInternal(child_state, variant, row, child_values_index, filter);
 		}
 	} else if (type_id == VariantLogicalType::DECIMAL) {
 		auto decimal_data = VariantUtils::DecodeDecimalData(variant, row, values_index);
@@ -80,7 +118,7 @@ void VariantColumnWriter::AnalyzeSchema(ParquetAnalyzeSchemaState &state_p, Vect
 	UnifiedVariantVectorData variant(recursive_format);
 
 	for (idx_t i = 0; i < count; i++) {
-		AnalyzeSchemaInternal(state.analyze_data, variant, i, 0);
+		AnalyzeSchemaInternal(state.analyze_data, variant, i, 0, state.filter);
 	}
 }
 
@@ -190,6 +228,14 @@ static bool ConstructShreddedType(const VariantAnalyzeData &state, LogicalType &
 
 void VariantColumnWriter::AnalyzeSchemaFinalize(const ParquetAnalyzeSchemaState &state_p) {
 	auto &state = state_p.Cast<VariantAnalyzeSchemaState>();
+	auto &config = DBConfig::GetConfig(writer.GetContext());
+	auto minimum_shredding_size = Settings::Get<VariantMinimumShreddingSizeSetting>(config);
+	if (!VariantShreddingEnabled(minimum_shredding_size, state.analyze_data.total_count)) {
+		//! Backstop if Init ran but the analyzed count is below the minimum.
+		//! is_analyzed locks child_writers after InitializeSchemaElements.
+		is_analyzed = true;
+		return;
+	}
 	LogicalType shredded_type;
 	if (!ConstructShreddedType(state.analyze_data, shredded_type)) {
 		//! Can't shred, keep the original children

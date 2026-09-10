@@ -4,6 +4,9 @@
 
 require parquet
 
+statement ok
+SET variant_minimum_shredding_size = 0;
+
 # Create data where the first ~2048 rows are UINT8 (not supported by
 # ConstructShreddedType) and the remaining rows include INT32 (supported).
 # With ROW_GROUP_SIZE=2048, the first row group contains only UINT8 values,

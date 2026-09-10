@@ -1608,6 +1608,30 @@ struct VariantMinimumShreddingSizeSetting {
 	static constexpr idx_t SettingIndex = 92;
 };
 
+struct VariantShredKeyPrefixSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "variant_shred_key_prefix";
+	static constexpr const char *Description =
+	    "Parquet writer only. Shred VARIANT object keys that start with this prefix (recursive). Empty (default) "
+	    "shreds every key. Unmatched keys stay in the untyped remainder. Native-storage checkpoint ignores this.";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = 93;
+};
+
+struct VariantShredKeysSetting {
+	using RETURN_TYPE = string;
+	static constexpr const char *Name = "variant_shred_keys";
+	static constexpr const char *Description =
+	    "Parquet writer only. Comma-separated extra VARIANT object keys to shred, unioned with "
+	    "variant_shred_key_prefix. Native-storage checkpoint ignores this.";
+	static constexpr const char *InputType = "VARCHAR";
+	static constexpr const char *DefaultValue = "";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
+	static constexpr idx_t SettingIndex = 94;
+};
+
 struct WalAutocheckpointEntriesSetting {
 	using RETURN_TYPE = idx_t;
 	static constexpr const char *Name = "wal_autocheckpoint_entries";
@@ -1616,7 +1640,7 @@ struct WalAutocheckpointEntriesSetting {
 	static constexpr const char *InputType = "UBIGINT";
 	static constexpr const char *DefaultValue = "0";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
-	static constexpr idx_t SettingIndex = 93;
+	static constexpr idx_t SettingIndex = 95;
 };
 
 struct WarningsAsErrorsSetting {
@@ -1626,7 +1650,7 @@ struct WarningsAsErrorsSetting {
 	static constexpr const char *InputType = "BOOLEAN";
 	static constexpr const char *DefaultValue = "false";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
-	static constexpr idx_t SettingIndex = 94;
+	static constexpr idx_t SettingIndex = 96;
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
@@ -1638,7 +1662,7 @@ struct WriteBufferRowGroupCountSetting {
 	static constexpr const char *InputType = "UBIGINT";
 	static constexpr const char *DefaultValue = "5";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
-	static constexpr idx_t SettingIndex = 95;
+	static constexpr idx_t SettingIndex = 97;
 };
 
 struct WriteBufferRowGroupMemoryLimitSetting {
@@ -1662,11 +1686,11 @@ struct ZstdMinStringLengthSetting {
 	static constexpr const char *InputType = "UBIGINT";
 	static constexpr const char *DefaultValue = "4096";
 	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_ONLY;
-	static constexpr idx_t SettingIndex = 96;
+	static constexpr idx_t SettingIndex = 98;
 };
 
 struct GeneratedSettingInfo {
-	static constexpr idx_t MaxSettingIndex = 97;
+	static constexpr idx_t MaxSettingIndex = 99;
 };
 
 //===----------------------------------------------------------------------===//

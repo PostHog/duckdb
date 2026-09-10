@@ -205,6 +205,25 @@ vector<idx_t> GetChildIndices(const UnifiedVariantVectorData &variant, idx_t row
 	return child_indices;
 }
 
+struct ParquetVariantUInt64 {
+	explicit ParquetVariantUInt64(const UnifiedVariantVectorData &variant, idx_t row, uint32_t values_index) {
+		auto data = const_data_ptr_cast(variant.GetData(row).GetData());
+		value = Load<uint64_t>(data + variant.GetByteOffset(row, values_index));
+	}
+
+	bool NeedsDecimal() const {
+		return value > uint64_t(NumericLimits<int64_t>::Maximum());
+	}
+
+	idx_t PayloadSize() const {
+		return NeedsDecimal() ? sizeof(int8_t) + sizeof(hugeint_t) : sizeof(int64_t);
+	}
+
+	void Write(data_ptr_t &value_data) const;
+
+	uint64_t value;
+};
+
 static idx_t AnalyzeValueData(const UnifiedVariantVectorData &variant, idx_t row, uint32_t values_index,
                               vector<uint32_t> &offsets, optional_ptr<ParquetVariantShreddingState> shredding_state) {
 	idx_t total_size = 0;
@@ -353,8 +372,10 @@ static idx_t AnalyzeValueData(const UnifiedVariantVectorData &variant, idx_t row
 		// store as int32_t
 		total_size += sizeof(int32_t);
 		break;
-	case VariantLogicalType::UINT32:
 	case VariantLogicalType::UINT64:
+		total_size += ParquetVariantUInt64(variant, row, values_index).PayloadSize();
+		break;
+	case VariantLogicalType::UINT32:
 	case VariantLogicalType::UINT128:
 	case VariantLogicalType::INT128:
 		// try to store as int64_t - fail if it doesn't fit
@@ -383,6 +404,22 @@ void WritePrimitiveTypeHeader(data_ptr_t &value_data) {
 
 	*value_data = value_header;
 	value_data++;
+}
+
+void ParquetVariantUInt64::Write(data_ptr_t &value_data) const {
+	if (!NeedsDecimal()) {
+		WritePrimitiveTypeHeader<VariantPrimitiveType::INT64>(value_data);
+		Store<int64_t>(static_cast<int64_t>(value), value_data);
+		value_data += sizeof(int64_t);
+		return;
+	}
+	// Parquet VARIANT has no UINT64 primitive. All UINT64 values fit in decimal16's
+	// 38 digits: a zero scale and a zero upper limb preserve the exact integer.
+	WritePrimitiveTypeHeader<VariantPrimitiveType::DECIMAL16>(value_data);
+	Store<int8_t>(0, value_data);
+	value_data += sizeof(int8_t);
+	Store<hugeint_t>(hugeint_t(0, value), value_data);
+	value_data += sizeof(hugeint_t);
 }
 
 struct VariantSimpleCopy {
@@ -573,8 +610,7 @@ static void WritePrimitiveValueData(const UnifiedVariantVectorData &variant, idx
 		CopySimplePrimitiveData<int64_t, VariantSimpleConversion<uint32_t>>(variant, value_data, row, values_index);
 		break;
 	case VariantLogicalType::UINT64:
-		WritePrimitiveTypeHeader<VariantPrimitiveType::INT64>(value_data);
-		CopySimplePrimitiveData<int64_t, VariantTryConvert<uint64_t>>(variant, value_data, row, values_index);
+		ParquetVariantUInt64(variant, row, values_index).Write(value_data);
 		break;
 	case VariantLogicalType::UINT128:
 		WritePrimitiveTypeHeader<VariantPrimitiveType::INT64>(value_data);
